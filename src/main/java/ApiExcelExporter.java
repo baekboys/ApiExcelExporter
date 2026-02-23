@@ -22,12 +22,12 @@ import java.util.stream.Collectors;
 
 /**
  * 프로젝트명: ApiExcelExporter (Bitbucket 관리형)
- * Version: 11.3 (설명 주석 및 상세 로그 복구본)
+ * Version: 11.4 (조건부 서식 및 위험도별 색상 테마 적용)
  * 반영사항:
- * 1. [복구] v11.2의 주요 변수 상세 한글 주석 및 항목별 설정 로드 로그 시스템 복구
- * 2. [기능] 프로퍼티(NOT_USE_LIMIT_COUNT, LAST_COMMIT_DATE) 기반 미사용 의심 별점(★) 산출
- * 3. [보안] 주요 변수 기본값 비우기("")를 통한 정보 노출 방지 유지
- * 4. [디자인] 관리용 컬럼 5개 및 아이보리(Lemon Chiffon) 헤더 테마 보존
+ * 1. [시각화] 저호출 API(0 < 건수 <= Limit) 셀 음영(분홍) 및 폰트(빨강) 적용
+ * 2. [시각화] 미사용 의심건 3단계 색상 테마 적용: 고위험(분홍/빨강), 중위험(노랑/진한노랑), 저위험(연두/녹색)
+ * 3. [복구] v11.2의 주요 변수 상세 한글 주석 및 항목별 설정 로드 로그 시스템 유지
+ * 4. [보안] 주요 변수 기본값 비우기("")를 통한 정보 노출 방지 유지
  * 5. [성능] i9-13900 32스레드 환경 최적화 parallelStream 분석 유지
  */
 public class ApiExcelExporter {
@@ -88,11 +88,12 @@ public class ApiExcelExporter {
 
         // 2. [로그] 실행 시작 정보 상세 기록
         System.out.println("===============================================================");
-        System.out.println("[START] " + REPO_NAME + " API 추출 및 Whatap 통합 시작 (v11.2)");
+        System.out.println("[START] " + REPO_NAME + " API 추출 및 Whatap 통합 시작 (v11.4)");
         if (isConfigLoaded) System.out.println("[INFO] 설정 파일 로드 성공: 외부 config.properties 사용.");
         else System.out.println("[INFO] 설정 파일 로드 실패: 기본값이 비어 있어 분석이 진행되지 않을 수 있습니다.");
         System.out.println("[INFO] 현재 분석 경로: " + ROOT_PATH);
         System.out.println("[INFO] Git 실행 경로: " + GIT_BIN_PATH);
+        System.out.println("[INFO] 미사용 기준: 호출수 " + NOT_USE_LIMIT_COUNT + "회 이하 / 커밋 " + LAST_COMMIT_DATE + " 이전");
         System.out.println("===============================================================");
 
         // 3. Whatap 통계 모듈 가동
@@ -137,7 +138,7 @@ public class ApiExcelExporter {
         allApiList.sort(Comparator.comparing(ApiInfo::getApiPath));
 
         // 4. 결과 파일명 확정
-        String baseFileName = String.format("API 현황 추출결과_(v11.3)_(%s)_(컨트롤러  %d개 & API %d개)_(%s)",
+        String baseFileName = String.format("API 현황 추출결과_(v11.4)_(%s)_(컨트롤러  %d개 & API %d개)_(%s)",
                 REPO_NAME, totalFiles, allApiList.size(), timestamp);
 
         logPath = OUTPUT_DIR + File.separator + baseFileName + ".log";
@@ -145,7 +146,7 @@ public class ApiExcelExporter {
 
         File finalExcelFile = new File(OUTPUT_DIR, baseFileName + ".xlsx");
 
-        // 5. 엑셀 리포트 생성 (Ivory 테마 및 별점 로직 포함)
+        // 5. 엑셀 리포트 생성 (Ivory 테마 및 위험도별 색상 로직 포함)
         try (Workbook workbook = new XSSFWorkbook();
              FileOutputStream fos = new FileOutputStream(finalExcelFile)) {
 
@@ -154,20 +155,33 @@ public class ApiExcelExporter {
             Sheet sheet = workbook.createSheet(sheetName);
             CreationHelper helper = workbook.getCreationHelper();
 
-            // 기존 테마 색상 정의
+            // --- 셀 스타일 정의 (기존 구조를 유지하며 필요한 스타일만 정의) ---
             CellStyle greyH = createStyle(workbook, IndexedColors.GREY_25_PERCENT.getIndex(), true, true);
             CellStyle yellowH = createStyle(workbook, IndexedColors.YELLOW.getIndex(), true, true);
             CellStyle orangeH = createStyle(workbook, IndexedColors.ORANGE.getIndex(), true, true);
             CellStyle greenH = createStyle(workbook, IndexedColors.LIGHT_GREEN.getIndex(), true, true);
             CellStyle blueH = createStyle(workbook, IndexedColors.LIGHT_CORNFLOWER_BLUE.getIndex(), true, true);
-
-            // [신규] 아이보리(Lemon Chiffon) 테마 정의 [cite: 2026-02-23]
             CellStyle ivoryH = createStyle(workbook, IndexedColors.LEMON_CHIFFON.getIndex(), true, true);
 
             CellStyle centerD = createStyle(workbook, null, false, true);
             CellStyle leftD = createStyle(workbook, null, false, false);
             CellStyle numD = workbook.createCellStyle(); numD.setDataFormat(workbook.createDataFormat().getFormat("#,##0"));
             numD.setBorderBottom(BorderStyle.THIN); numD.setBorderTop(BorderStyle.THIN); numD.setBorderLeft(BorderStyle.THIN); numD.setBorderRight(BorderStyle.THIN);
+
+            // [v11.4] 고위험 및 저호출용 스타일 (분홍 배경 + 빨강 글자)
+            CellStyle highRiskS = createStyle(workbook, IndexedColors.ROSE.getIndex(), true, true);
+            Font redF = workbook.createFont(); redF.setColor(IndexedColors.RED.getIndex()); redF.setBold(true);
+            highRiskS.setFont(redF);
+
+            // [v11.4] 중위험 스타일 (노랑 배경 + 진한 노랑 글자)
+            CellStyle midRiskS = createStyle(workbook, IndexedColors.YELLOW.getIndex(), true, true);
+            Font goldF = workbook.createFont(); goldF.setColor(IndexedColors.GOLD.getIndex()); goldF.setBold(true);
+            midRiskS.setFont(goldF);
+
+            // [v11.4] 저위험 스타일 (연두 배경 + 진한 녹색 글자)
+            CellStyle lowRiskS = createStyle(workbook, IndexedColors.LIGHT_GREEN.getIndex(), true, true);
+            Font darkGreenF = workbook.createFont(); darkGreenF.setColor(IndexedColors.DARK_GREEN.getIndex()); darkGreenF.setBold(true);
+            lowRiskS.setFont(darkGreenF);
 
             CellStyle linkD = createStyle(workbook, null, false, false);
             Font linkFont = workbook.createFont(); linkFont.setColor(IndexedColors.BLUE.getIndex()); linkFont.setUnderline(Font.U_SINGLE);
@@ -176,7 +190,6 @@ public class ApiExcelExporter {
 
             sheet.createFreezePane(3, 1);
 
-            // [기능 추가] 헤더 확장 (총 27개 컬럼) [cite: 2026-02-23]
             String[] headers = {"순번","레파지토리","API 경로","전체 URL","repository path","컨트롤러명","호출메소드",
                     "Deprecated","커밋일자1","커밋터1","코멘트1","커밋일자2","커밋터2","코멘트2","커밋일자3","커밋터3","코멘트3",
                     "호출건수(APM추출필요)", "프로그램ID(필요시)", "담당자(필요시)", "미사용 의심건", "미사용 검토결과",
@@ -191,7 +204,7 @@ public class ApiExcelExporter {
                 else if (i <= 17) cell.setCellStyle(orangeH);
                 else if (i <= 19) cell.setCellStyle(greenH);
                 else if (i <= 21) cell.setCellStyle(blueH);
-                else cell.setCellStyle(ivoryH); // 22~26번 인덱스: 아이보리 적용 [cite: 2026-02-23]
+                else cell.setCellStyle(ivoryH);
             }
             sheet.setAutoFilter(new CellRangeAddress(0, 0, 0, headers.length - 1));
 
@@ -205,18 +218,19 @@ public class ApiExcelExporter {
                 long[] rowStats = whatapStats.get(info.apiPath);
                 if (rowStats != null) for (long count : rowStats) totalCalls += count;
 
-                // [v11.3 별점 로직] [cite: 2026-02-23]
+                // [v11.4] 미사용 의심 등급 산출 로직
                 String suspicionScore = "";
+                int caseType = 0;
                 LocalDate thresholdDate = LocalDate.parse(LAST_COMMIT_DATE);
                 LocalDate latestCommitDate = getLatestDate(info.git1[0], info.git2[0], info.git3[0]);
 
                 if (isDep && totalCalls == 0) {
-                    suspicionScore = "★★★";
+                    suspicionScore = "★★★"; caseType = 1;
                 } else if (totalCalls <= NOT_USE_LIMIT_COUNT) {
                     if (latestCommitDate != null && latestCommitDate.isBefore(thresholdDate)) {
-                        suspicionScore = "★★☆";
+                        suspicionScore = "★★☆"; caseType = 2;
                     } else {
-                        suspicionScore = "★☆☆";
+                        suspicionScore = "★☆☆"; caseType = 3;
                     }
                 }
 
@@ -229,9 +243,19 @@ public class ApiExcelExporter {
 
                 for (int j = 0; j < data.length; j++) {
                     Cell cell = row.createCell(j);
-                    if (j == 17) {
+                    if (j == 17) { // [v11.4] 호출건수 강조 로직 (0건 제외, Limit 이하)
                         cell.setCellValue(totalCalls);
-                        cell.setCellStyle(numD);
+                        if (totalCalls > 0 && totalCalls <= NOT_USE_LIMIT_COUNT) {
+                            cell.setCellStyle(highRiskS);
+                        } else {
+                            cell.setCellStyle(numD);
+                        }
+                    } else if (j == 20) { // [v11.4] 미사용 의심건 위험도별 색상 적용
+                        cell.setCellValue(suspicionScore);
+                        if (caseType == 1) cell.setCellStyle(highRiskS);
+                        else if (caseType == 2) cell.setCellStyle(midRiskS);
+                        else if (caseType == 3) cell.setCellStyle(lowRiskS);
+                        else cell.setCellStyle(centerD);
                     } else {
                         cell.setCellValue(data[j]);
                         boolean isCenter = (j==0 || j==1 || j==5 || j==6 || j==7 || j==8 || j==9 || j==11 || j==12 || j==14 || j==15 || (j>=18));
@@ -268,7 +292,7 @@ public class ApiExcelExporter {
         return dates.stream().max(Comparator.naturalOrder()).orElse(null);
     }
 
-    /** [복구] 설정값을 한 줄당 하나씩 인식하여 상세 로그를 남깁니다. [cite: 2026-02-05] */
+    /** [복구] 설정값을 한 줄당 하나씩 인식하여 상세 로그를 남깁니다. */
     private static void loadExternalConfig() {
         Properties prop = new Properties();
         File configFile = new File("config.properties");
@@ -423,7 +447,7 @@ public class ApiExcelExporter {
     private static void saveInitialLogsToPath() {
         try (FileWriter fw = new FileWriter(logPath, false); PrintWriter pw = new PrintWriter(fw)) {
             pw.println("===============================================================");
-            pw.println("[START] " + REPO_NAME + " API 추출 및 Whatap 통합 시작 (v11.3)");
+            pw.println("[START] " + REPO_NAME + " API 추출 및 Whatap 통합 시작 (v11.4)");
             pw.println("[INFO] 분석 경로: " + ROOT_PATH);
             pw.println("===============================================================");
             synchronized (RUNTIME_LOGS) { for (String l : RUNTIME_LOGS) pw.println(l); }
