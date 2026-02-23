@@ -11,21 +11,24 @@ import org.apache.poi.ss.util.CellRangeAddress;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.*;
 import java.util.stream.Collectors;
 
 /**
  * 프로젝트명: ApiExcelExporter (Bitbucket 관리형)
- * Version: 11.2 (컬럼 확장 및 Ivory 테마 적용)
+ * Version: 11.3 (설명 주석 및 상세 로그 복구본)
  * 반영사항:
- * 1. [지적 반영] 주요 변수 기본값 비우기("")를 통한 보안 강화 (정보 노출 방지)
- * 2. [기능 추가] 엑셀 우측에 관리용 컬럼 5개 추가 (조치예정일자, 조치일자, 관련티켓, 조치담당자, 비고)
- * 3. [디자인] 신규 컬럼 5개에 '아이보리(Lemon Chiffon)' 헤더 색상 적용
- * 4. [로직 보존] i9-13900 최적화 parallelStream 및 Whatap 통합 로직 유지 (v11.1 베이스)
+ * 1. [복구] v11.2의 주요 변수 상세 한글 주석 및 항목별 설정 로드 로그 시스템 복구
+ * 2. [기능] 프로퍼티(NOT_USE_LIMIT_COUNT, LAST_COMMIT_DATE) 기반 미사용 의심 별점(★) 산출
+ * 3. [보안] 주요 변수 기본값 비우기("")를 통한 정보 노출 방지 유지
+ * 4. [디자인] 관리용 컬럼 5개 및 아이보리(Lemon Chiffon) 헤더 테마 보존
+ * 5. [성능] i9-13900 32스레드 환경 최적화 parallelStream 분석 유지
  */
 public class ApiExcelExporter {
 
@@ -48,9 +51,17 @@ public class ApiExcelExporter {
     /** [핵심변수 5] Git 실행 경로 (환경변수 미등록 대비) */
     private static String GIT_BIN_PATH = "git";
 
-    /** [상태변수] 외부 설정 파일(config.properties) 로드 성공 여부 */
+    /** [v11.3 신규] 미사용 의심 판별 기준 호출수: 이 횟수 이하이면 별점이 부여됩니다. */
+    private static long NOT_USE_LIMIT_COUNT = 0;
+
+    /** [v11.3 신규] 미사용 의심 판별 기준일: 이 날짜 이전 커밋이면 별점이 추가됩니다. (YYYY-MM-DD) */
+    private static String LAST_COMMIT_DATE = "1900-01-01";
+
+    /** 설정 파일(config.properties)이 정상적으로 로드되었는지 확인하는 플래그입니다. */
     private static boolean isConfigLoaded = false;
 
+    // ==========================================================================================
+    // [ 2. 분석 엔진 및 로깅 전용 변수 ]
     // ==========================================================================================
 
     private static final List<String> MAPPING_ANNS = Arrays.asList("RequestMapping", "GetMapping", "PostMapping", "PutMapping", "DeleteMapping", "PatchMapping");
@@ -58,8 +69,10 @@ public class ApiExcelExporter {
     private static String logPath = "";
     private static final AtomicInteger PROCESSED_COUNT = new AtomicInteger(0);
 
+    // ==========================================================================================
+
     public static void main(String[] args) {
-        // 1. 설정 로드
+        // 1. 설정값 먼저 로드 (항목별 상세 로그 출력 포함)
         loadExternalConfig();
 
         if (OUTPUT_DIR.isEmpty()) {
@@ -73,6 +86,7 @@ public class ApiExcelExporter {
         long startTime = System.currentTimeMillis();
         String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
 
+        // 2. [로그] 실행 시작 정보 상세 기록
         System.out.println("===============================================================");
         System.out.println("[START] " + REPO_NAME + " API 추출 및 Whatap 통합 시작 (v11.2)");
         if (isConfigLoaded) System.out.println("[INFO] 설정 파일 로드 성공: 외부 config.properties 사용.");
@@ -81,7 +95,7 @@ public class ApiExcelExporter {
         System.out.println("[INFO] Git 실행 경로: " + GIT_BIN_PATH);
         System.out.println("===============================================================");
 
-        // 2. Whatap 통계 모듈 가동
+        // 3. Whatap 통계 모듈 가동
         System.out.println("[INFO] 와탭 통계 수집 및 엑셀 리포트 생성 중...");
         Map<String, long[]> whatapStats = WhatapApiCounter.getApiStats();
         WhatapApiCounter.generateExcelReport(timestamp);
@@ -100,6 +114,7 @@ public class ApiExcelExporter {
             totalFiles = controllerFiles.size();
             final int total = totalFiles;
 
+            // i9-13900의 고성능 멀티코어 성능 활용 (parallelStream)
             controllerFiles.parallelStream().forEach(file -> {
                 String relativePath = rootPathObj.relativize(file).toString();
                 int current = PROCESSED_COUNT.incrementAndGet();
@@ -121,8 +136,8 @@ public class ApiExcelExporter {
 
         allApiList.sort(Comparator.comparing(ApiInfo::getApiPath));
 
-        // [지적 반영] 파일명 규격화 (v11.2 업데이트) [cite: 2026-02-23]
-        String baseFileName = String.format("API 현황 추출결과_(v11.2)_(%s)_(컨트롤러  %d개 & API %d개)_(%s)",
+        // 4. 결과 파일명 확정
+        String baseFileName = String.format("API 현황 추출결과_(v11.3)_(%s)_(컨트롤러  %d개 & API %d개)_(%s)",
                 REPO_NAME, totalFiles, allApiList.size(), timestamp);
 
         logPath = OUTPUT_DIR + File.separator + baseFileName + ".log";
@@ -130,6 +145,7 @@ public class ApiExcelExporter {
 
         File finalExcelFile = new File(OUTPUT_DIR, baseFileName + ".xlsx");
 
+        // 5. 엑셀 리포트 생성 (Ivory 테마 및 별점 로직 포함)
         try (Workbook workbook = new XSSFWorkbook();
              FileOutputStream fos = new FileOutputStream(finalExcelFile)) {
 
@@ -189,13 +205,27 @@ public class ApiExcelExporter {
                 long[] rowStats = whatapStats.get(info.apiPath);
                 if (rowStats != null) for (long count : rowStats) totalCalls += count;
 
-                // 데이터 배열 확장 대응 (27개 항목)
+                // [v11.3 별점 로직] [cite: 2026-02-23]
+                String suspicionScore = "";
+                LocalDate thresholdDate = LocalDate.parse(LAST_COMMIT_DATE);
+                LocalDate latestCommitDate = getLatestDate(info.git1[0], info.git2[0], info.git3[0]);
+
+                if (isDep && totalCalls == 0) {
+                    suspicionScore = "★★★";
+                } else if (totalCalls <= NOT_USE_LIMIT_COUNT) {
+                    if (latestCommitDate != null && latestCommitDate.isBefore(thresholdDate)) {
+                        suspicionScore = "★★☆";
+                    } else {
+                        suspicionScore = "★☆☆";
+                    }
+                }
+
                 String[] data = {String.valueOf(i + 1), REPO_NAME, info.apiPath, fullUrl, info.repoPath,
                         info.controllerName, info.methodName, info.isDeprecated,
                         info.git1[0], info.git1[1], info.git1[2], info.git2[0], info.git2[1], info.git2[2],
                         info.git3[0], info.git3[1], info.git3[2],
-                        String.valueOf(totalCalls), "", "", (totalCalls == 0 ? "O" : ""), "",
-                        "", "", "", "", ""}; // 조치관련 5종 공백 초기화
+                        String.valueOf(totalCalls), "", "", suspicionScore, "",
+                        "", "", "", "", ""};
 
                 for (int j = 0; j < data.length; j++) {
                     Cell cell = row.createCell(j);
@@ -227,22 +257,60 @@ public class ApiExcelExporter {
             addLog("\n[SUCCESS] 통합 엑셀 저장 완료: " + finalExcelFile.getName());
         } catch (Exception e) { addExceptionLog("엑셀 저장 중 오류", e); }
 
-        addLog("\n[FINISH] 작업 종료: " + (System.currentTimeMillis() - startTime) / 1000 + "초 소요");
+        addLog("\n[FINISH] 전체 분석 작업 종료: " + (System.currentTimeMillis() - startTime) / 1000 + "초 소요");
     }
 
+    private static LocalDate getLatestDate(String d1, String d2, String d3) {
+        List<LocalDate> dates = new ArrayList<>();
+        try { if(!"-".equals(d1)) dates.add(LocalDate.parse(d1)); } catch(Exception ignored){}
+        try { if(!"-".equals(d2)) dates.add(LocalDate.parse(d2)); } catch(Exception ignored){}
+        try { if(!"-".equals(d3)) dates.add(LocalDate.parse(d3)); } catch(Exception ignored){}
+        return dates.stream().max(Comparator.naturalOrder()).orElse(null);
+    }
+
+    /** [복구] 설정값을 한 줄당 하나씩 인식하여 상세 로그를 남깁니다. [cite: 2026-02-05] */
     private static void loadExternalConfig() {
         Properties prop = new Properties();
         File configFile = new File("config.properties");
         if (configFile.exists()) {
             try (InputStream is = new FileInputStream(configFile)) {
                 prop.load(is);
-                if (prop.getProperty("REPO_NAME") != null) REPO_NAME = prop.getProperty("REPO_NAME").trim();
-                if (prop.getProperty("DOMAIN") != null) DOMAIN = prop.getProperty("DOMAIN").trim();
-                if (prop.getProperty("ROOT_PATH") != null) ROOT_PATH = prop.getProperty("ROOT_PATH").trim();
-                if (prop.getProperty("OUTPUT_DIR") != null) OUTPUT_DIR = prop.getProperty("OUTPUT_DIR").trim();
-                if (prop.getProperty("GIT_BIN_PATH") != null) GIT_BIN_PATH = prop.getProperty("GIT_BIN_PATH").trim();
+                System.out.println("[LOG] config.properties 설정 로드 상세 내역:");
+
+                if (prop.getProperty("REPO_NAME") != null) {
+                    REPO_NAME = prop.getProperty("REPO_NAME").trim();
+                    System.out.println("  > REPO_NAME      : " + REPO_NAME);
+                }
+                if (prop.getProperty("DOMAIN") != null) {
+                    DOMAIN = prop.getProperty("DOMAIN").trim();
+                    System.out.println("  > DOMAIN         : " + DOMAIN);
+                }
+                if (prop.getProperty("ROOT_PATH") != null) {
+                    ROOT_PATH = prop.getProperty("ROOT_PATH").trim();
+                    System.out.println("  > ROOT_PATH      : " + ROOT_PATH);
+                }
+                if (prop.getProperty("OUTPUT_DIR") != null) {
+                    OUTPUT_DIR = prop.getProperty("OUTPUT_DIR").trim();
+                    System.out.println("  > OUTPUT_DIR     : " + OUTPUT_DIR);
+                }
+                if (prop.getProperty("GIT_BIN_PATH") != null) {
+                    GIT_BIN_PATH = prop.getProperty("GIT_BIN_PATH").trim();
+                    System.out.println("  > GIT_BIN_PATH   : " + GIT_BIN_PATH);
+                }
+                if (prop.getProperty("NOT_USE_LIMIT_COUNT") != null) {
+                    NOT_USE_LIMIT_COUNT = Long.parseLong(prop.getProperty("NOT_USE_LIMIT_COUNT").trim());
+                    System.out.println("  > NOT_USE_LIMIT  : " + NOT_USE_LIMIT_COUNT + "건 이하");
+                }
+                if (prop.getProperty("LAST_COMMIT_DATE") != null) {
+                    LAST_COMMIT_DATE = prop.getProperty("LAST_COMMIT_DATE").trim();
+                    System.out.println("  > LAST_COMMIT    : " + LAST_COMMIT_DATE + " 이전");
+                }
+
+                System.out.println("---------------------------------------------------------------");
                 isConfigLoaded = true;
-            } catch (IOException ignored) {}
+            } catch (Exception e) {
+                System.err.println("[ERROR] 설정 로드 중 오류: " + e.getMessage());
+            }
         }
     }
 
@@ -355,7 +423,7 @@ public class ApiExcelExporter {
     private static void saveInitialLogsToPath() {
         try (FileWriter fw = new FileWriter(logPath, false); PrintWriter pw = new PrintWriter(fw)) {
             pw.println("===============================================================");
-            pw.println("[START] " + REPO_NAME + " API 추출 및 Whatap 통합 시작 (v11.2)");
+            pw.println("[START] " + REPO_NAME + " API 추출 및 Whatap 통합 시작 (v11.3)");
             pw.println("[INFO] 분석 경로: " + ROOT_PATH);
             pw.println("===============================================================");
             synchronized (RUNTIME_LOGS) { for (String l : RUNTIME_LOGS) pw.println(l); }
