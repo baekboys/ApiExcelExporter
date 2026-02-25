@@ -243,9 +243,9 @@ public class ApiExcelExporter {
 
                 for (int j = 0; j < data.length; j++) {
                     Cell cell = row.createCell(j);
-                    if (j == 17) { // [v11.4] 호출건수 강조 로직 (0건 제외, Limit 이하)
+                    if (j == 17) { // [v11.4] 호출건수 강조 로직 (0건 포함, Limit 이하)
                         cell.setCellValue(totalCalls);
-                        if (totalCalls > 0 && totalCalls <= NOT_USE_LIMIT_COUNT) {
+                        if (totalCalls >= 0 && totalCalls <= NOT_USE_LIMIT_COUNT) {
                             cell.setCellStyle(highRiskS);
                         } else {
                             cell.setCellStyle(numD);
