@@ -16,11 +16,12 @@ import java.util.stream.Collectors;
 
 /**
  * 프로젝트명: WhatapApiCounter (연간 통계 전수 추출 도구)
- * Version: 5.5 (보안 강화 버전)
+ * Version: 5.5 (보안 강화 및 pcode 파라미터화 버전)
  * [수정 사항]
- * 1. [보안 강화] WHATAP_URL, OUTPUT_DIR 기본값을 빈 값("")으로 수정하여 정보 노출 방지
- * 2. [로직 보존] v5.3의 모든 상세 주석, .log 파일 실시간 생성 및 parallelStream 수집 로직 유지
- * 3. [연동] generateExcelReport를 public으로 유지하여 ApiExcelExporter v11.2와 연동 보장
+ * 1. [파라미터화] pcode 값을 config.properties에서 로드할 수 있도록 수정 (기본값: 8)
+ * 2. [보안 강화] WHATAP_URL, OUTPUT_DIR 기본값을 빈 값("")으로 수정하여 정보 노출 방지
+ * 3. [로직 보존] v5.3의 모든 상세 주석, .log 파일 실시간 생성 및 parallelStream 수집 로직 유지
+ * 4. [연동] generateExcelReport를 public으로 유지하여 ApiExcelExporter v11.2와 연동 보장
  */
 public class WhatapApiCounter {
 
@@ -30,6 +31,9 @@ public class WhatapApiCounter {
 
     /** 와탭 API 엔드포인트: 보안을 위해 기본값을 비웠습니다. config.properties에서 [WHATAP_URL]로 설정하세요. */
     private static String WHATAP_URL = "";
+
+    /** [신규] 와탭 프로젝트 코드: 여러 프로젝트 대응을 위해 프로퍼티로 관리합니다. (기본값: 8) */
+    private static int WHATAP_PCODE = 8;
 
     /** Jackson Object Mapper: JSON 페이로드 생성 및 응답 데이터 파싱을 담당합니다. */
     private static final ObjectMapper MAPPER = new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT);
@@ -155,7 +159,7 @@ public class WhatapApiCounter {
         }
     }
 
-    /** [지적 반영] 보안 변수들을 프로퍼티에서 로드하는 로직으로 강화 [cite: 2026-02-23] */
+    /** [지적 반영] 보안 변수들을 프로퍼티에서 로드하는 로직으로 강화 */
     private static void loadConfig() {
         Properties prop = new Properties();
         File configFile = new File("config.properties");
@@ -174,12 +178,18 @@ public class WhatapApiCounter {
                 WHATAP_URL = prop.getProperty("WHATAP_URL", "").trim();
                 OUTPUT_DIR = prop.getProperty("OUTPUT_DIR", "").trim();
 
+                // [v5.5 신규] pcode 로드 (기본값 8)
+                try {
+                    WHATAP_PCODE = Integer.parseInt(prop.getProperty("WHATAP_PCODE", "8").trim());
+                } catch (NumberFormatException e) { WHATAP_PCODE = 8; }
+
                 String fProp = prop.getProperty("WHATAP_FILTER", "").trim();
                 WHATAP_FILTERS = Arrays.stream(fProp.split(",")).map(String::trim).filter(s -> !s.isEmpty()).collect(Collectors.toList());
                 if (WHATAP_FILTERS.isEmpty()) WHATAP_FILTERS.add("");
 
                 addLog("[LOG] 설정값 로드 상세 내역:");
                 addLog("  > WHATAP_URL     : " + (WHATAP_URL.isEmpty() ? "MISSING!" : WHATAP_URL));
+                addLog("  > WHATAP_PCODE   : " + WHATAP_PCODE); // 로그 추가
                 addLog("  > OKINDS_NAME    : " + WHATAP_OKINDS_NAME);
                 addLog("  > OKINDS_ID      : " + WHATAP_OKINDS);
                 addLog("  > START_DATE     : " + START_DATE);
@@ -237,11 +247,12 @@ public class WhatapApiCounter {
         try {
             if (WHATAP_URL.isEmpty()) { addLog("  - [SKIP] URL이 설정되지 않았습니다."); return; }
 
+            // [v5.5] pcode 값을 동적으로 적용하도록 수정
             String jsonPayload = String.format(
                     "{\n" +
                             "  \"type\": \"stat\",\n" +
                             "  \"path\": \"ap\",\n" +
-                            "  \"pcode\": 8,\n" +
+                            "  \"pcode\": %d,\n" + // 8 고정값에서 %d로 변경
                             "  \"params\": {\n" +
                             "    \"stime\": %d,\n" +
                             "    \"etime\": %d,\n" +
@@ -255,7 +266,7 @@ public class WhatapApiCounter {
                             "  },\n" +
                             "  \"stime\": %d,\n" +
                             "  \"etime\": %d\n" +
-                            "}", stime, etime, filter, WHATAP_OKINDS, stime, etime
+                            "}", WHATAP_PCODE, stime, etime, filter, WHATAP_OKINDS, stime, etime // WHATAP_PCODE 추가
             );
 
             addLog("\n>>> [HTTP REQUEST] 구간: " + label + " (필터: " + filter + ")");
@@ -356,9 +367,9 @@ public class WhatapApiCounter {
             wb.dispose();
 
             addLog("\n[SUCCESS] 통계 엑셀 생성 완료");
-            addLog("  > 저장 위치 : " + file.getParent());
-            addLog("  > 파 일 명  : " + file.getName());
-            addLog("  > 전체 경로 : " + file.getAbsolutePath());
+            addLog("  > 저장 위치 : \" + file.getParent()");
+            addLog("  > 파 일 명  : \" + file.getName()");
+            addLog("  > 전체 경로 : \" + file.getAbsolutePath()");
 
         } catch (Exception e) { e.printStackTrace(); }
     }
