@@ -23,14 +23,14 @@ import java.util.stream.Collectors;
 
 /**
  * 프로젝트명: ApiExcelExporter (Bitbucket 관리형)
- * Version: 11.8 (파일명 간소화 및 날짜 형식 변경)
+ * Version: 11.9 (추출일자 컬럼 추가 및 날짜 서식 적용)
  * 반영사항:
- * 1. [컬럼 변경] '팀'과 '담당자' 컬럼 순서 교체 및 명칭 변경 (담당자(필요시) -> 담당자) [cite: 2026-03-03]
- * 2. [기능 유지] '미사용 검토결과' 컬럼에 선택 목록(O, △, X) 유효성 검사 적용 유지 [cite: 2026-02-23]
- * 3. [시각화] 저호출 API(0 < 건수 <= Limit) 셀 음영(분홍) 및 폰트(빨강) 적용 유지 [cite: 2026-02-23]
- * 4. [복구] v11.2의 주요 변수 상세 한글 주석 및 항목별 설정 로드 로그 시스템 유지 [cite: 2026-02-05]
+ * 1. [기능 추가] '순번' 옆에 '추출일자' 컬럼 추가 및 엑셀 Date 서식(yyyy-mm-dd) 적용 [cite: 2026-03-06]
+ * 2. [컬럼 관리] '팀'과 '담당자' 컬럼 순서 및 명칭 유지 (팀 -> 담당자) [cite: 2026-03-03]
+ * 3. [기능 유지] '미사용 검토결과' 컬럼 드롭다운 목록(O, △, X) 적용 (인덱스 자동 조정) [cite: 2026-02-23]
+ * 4. [시각화] 저호출 API 셀 음영(분홍/빨강) 및 미사용 의심 3단계 테마 유지 [cite: 2026-02-23]
  * 5. [성능] i9-13900 32스레드 환경 최적화 parallelStream 분석 유지 [cite: 2026-02-23]
- * 6. [파일명] 생성 시 날짜 형식 변경 (yyyy-MM-dd_추출) 및 "추출결과" 텍스트 제거 [cite: 2026-03-06]
+ * 6. [파일명] 간소화된 파일명 규칙 및 날짜 형식(yyyy-MM-dd_추출) 유지 [cite: 2026-03-06]
  */
 public class ApiExcelExporter {
 
@@ -86,12 +86,12 @@ public class ApiExcelExporter {
         if (!dir.exists()) dir.mkdirs();
 
         long startTime = System.currentTimeMillis();
-        // [v11.8] 날짜 형식 변경 (yyyy-MM-dd_추출) [cite: 2026-03-06]
+        // [v11.8] 날짜 형식 변경 (yyyy-MM-dd_추출)
         String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd'_추출'"));
 
         // 2. [로그] 실행 시작 정보 상세 기록
         System.out.println("===============================================================");
-        System.out.println("[START] " + REPO_NAME + " API 추출 및 Whatap 통합 시작 (v11.8)");
+        System.out.println("[START] " + REPO_NAME + " API 추출 및 Whatap 통합 시작 (v11.9)");
         if (isConfigLoaded) System.out.println("[INFO] 설정 파일 로드 성공: 외부 config.properties 사용.");
         else System.out.println("[INFO] 설정 파일 로드 실패: 기본값이 비어 있어 분석이 진행되지 않을 수 있습니다.");
         System.out.println("[INFO] 현재 분석 경로: " + ROOT_PATH);
@@ -140,7 +140,7 @@ public class ApiExcelExporter {
 
         allApiList.sort(Comparator.comparing(ApiInfo::getApiPath));
 
-        // 4. 결과 파일명 확정 [v11.8] 명칭 간소화 적용 [cite: 2026-03-06]
+        // 4. 결과 파일명 확정 [v11.8] 명칭 간소화 적용
         String baseFileName = String.format("API목록_(%s)_(컨트롤러  %d개 & API %d개)_(%s)",
                 REPO_NAME, totalFiles, allApiList.size(), timestamp);
 
@@ -149,7 +149,7 @@ public class ApiExcelExporter {
 
         File finalExcelFile = new File(OUTPUT_DIR, baseFileName + ".xlsx");
 
-        // 5. 엑셀 리포트 생성 (Ivory 테마 및 위험도별 색상 로직 포함)
+        // 5. 엑셀 리포트 생성
         try (Workbook workbook = new XSSFWorkbook();
              FileOutputStream fos = new FileOutputStream(finalExcelFile)) {
 
@@ -158,7 +158,7 @@ public class ApiExcelExporter {
             Sheet sheet = workbook.createSheet(sheetName);
             CreationHelper helper = workbook.getCreationHelper();
 
-            // --- 셀 스타일 정의 (기존 구조를 유지하며 필요한 스타일만 정의) ---
+            // --- 셀 스타일 정의 ---
             CellStyle greyH = createStyle(workbook, IndexedColors.GREY_25_PERCENT.getIndex(), true, true);
             CellStyle yellowH = createStyle(workbook, IndexedColors.YELLOW.getIndex(), true, true);
             CellStyle orangeH = createStyle(workbook, IndexedColors.ORANGE.getIndex(), true, true);
@@ -171,17 +171,18 @@ public class ApiExcelExporter {
             CellStyle numD = workbook.createCellStyle(); numD.setDataFormat(workbook.createDataFormat().getFormat("#,##0"));
             numD.setBorderBottom(BorderStyle.THIN); numD.setBorderTop(BorderStyle.THIN); numD.setBorderLeft(BorderStyle.THIN); numD.setBorderRight(BorderStyle.THIN);
 
-            // [v11.4] 고위험 및 저호출용 스타일 (분홍 배경 + 빨강 글자)
+            // [v11.9] 날짜 데이터용 스타일 (yyyy-mm-dd) [cite: 2026-03-06]
+            CellStyle dateD = createStyle(workbook, null, false, true);
+            dateD.setDataFormat(workbook.createDataFormat().getFormat("yyyy-mm-dd"));
+
             CellStyle highRiskS = createStyle(workbook, IndexedColors.ROSE.getIndex(), true, true);
             Font redF = workbook.createFont(); redF.setColor(IndexedColors.RED.getIndex()); redF.setBold(true);
             highRiskS.setFont(redF);
 
-            // [v11.4] 중위험 스타일 (노랑 배경 + 진한 노랑 글자)
             CellStyle midRiskS = createStyle(workbook, IndexedColors.YELLOW.getIndex(), true, true);
             Font goldF = workbook.createFont(); goldF.setColor(IndexedColors.GOLD.getIndex()); goldF.setBold(true);
             midRiskS.setFont(goldF);
 
-            // [v11.4] 저위험 스타일 (연두 배경 + 진한 녹색 글자)
             CellStyle lowRiskS = createStyle(workbook, IndexedColors.LIGHT_GREEN.getIndex(), true, true);
             Font darkGreenF = workbook.createFont(); darkGreenF.setColor(IndexedColors.DARK_GREEN.getIndex()); darkGreenF.setBold(true);
             lowRiskS.setFont(darkGreenF);
@@ -191,10 +192,10 @@ public class ApiExcelExporter {
             linkD.setFont(linkFont);
             CellStyle depColumnStyle = createStyle(workbook, IndexedColors.GREY_25_PERCENT.getIndex(), false, true);
 
-            sheet.createFreezePane(3, 1);
+            sheet.createFreezePane(4, 1); // 추출일자 추가로 틀 고정 범위 4로 변경 [cite: 2026-03-06]
 
-            // [v11.7] '팀'과 '담당자' 컬럼 순서 교체 및 명칭 변경 [cite: 2026-03-03]
-            String[] headers = {"순번","레파지토리","API 경로","전체 URL","repository path","컨트롤러명","호출메소드",
+            // [v11.9] '추출일자' 컬럼 추가 및 헤더 인덱스 재조정 [cite: 2026-03-06]
+            String[] headers = {"순번","추출일자","레파지토리","API 경로","전체 URL","repository path","컨트롤러명","호출메소드",
                     "Deprecated","커밋일자1","커밋터1","코멘트1","커밋일자2","커밋터2","코멘트2","커밋일자3","커밋터3","코멘트3",
                     "호출건수(APM추출필요)", "프로그램ID(필요시)", "팀", "담당자", "미사용 의심건", "미사용 검토결과",
                     "조치예정일자", "조치일자", "관련티켓", "조치담당자", "비고"};
@@ -203,24 +204,26 @@ public class ApiExcelExporter {
             for (int i = 0; i < headers.length; i++) {
                 Cell cell = headerRow.createCell(i);
                 cell.setCellValue(headers[i]);
-                if (i <= 3) cell.setCellStyle(greyH);
-                else if (i <= 6) cell.setCellStyle(yellowH);
-                else if (i <= 17) cell.setCellStyle(orangeH);
-                else if (i <= 20) cell.setCellStyle(greenH); // '담당자'(20)까지 녹색 테마 확장 [cite: 2026-02-23]
-                else if (i <= 22) cell.setCellStyle(blueH);  // '미사용 검토결과'(22)까지 블루 테마 [cite: 2026-02-23]
+                if (i <= 4) cell.setCellStyle(greyH);      // 순번~전체URL (0~4) [cite: 2026-03-06]
+                else if (i <= 7) cell.setCellStyle(yellowH); // path~메소드 (5~7)
+                else if (i <= 18) cell.setCellStyle(orangeH); // Dep~호출건수 (8~18)
+                else if (i <= 21) cell.setCellStyle(greenH);  // ID~담당자 (19~21)
+                else if (i <= 23) cell.setCellStyle(blueH);   // 의심건~검토결과 (22~23)
                 else cell.setCellStyle(ivoryH);
             }
             sheet.setAutoFilter(new CellRangeAddress(0, 0, 0, headers.length - 1));
 
-            // [v11.7] 데이터 유효성 설정 (미사용 검토결과 컬럼: 22번) [cite: 2026-02-23]
+            // [v11.9] 데이터 유효성 설정 (미사용 검토결과 컬럼: 23번) [cite: 2026-03-06]
             DataValidationHelper validationHelper = sheet.getDataValidationHelper();
             String[] reviewOptions = {"O(미사용)", "△(판단불가)", "X(사용)"};
             DataValidationConstraint constraint = validationHelper.createExplicitListConstraint(reviewOptions);
-            CellRangeAddressList addressList = new CellRangeAddressList(1, Math.max(1, allApiList.size() + 1000), 22, 22);
+            CellRangeAddressList addressList = new CellRangeAddressList(1, Math.max(1, allApiList.size() + 1000), 23, 23);
             DataValidation validation = validationHelper.createValidation(constraint, addressList);
             validation.setSuppressDropDownArrow(true);
             validation.setShowErrorBox(true);
             sheet.addValidationData(validation);
+
+            LocalDate now = LocalDate.now();
 
             for (int i = 0; i < allApiList.size(); i++) {
                 ApiInfo info = allApiList.get(i);
@@ -232,7 +235,6 @@ public class ApiExcelExporter {
                 long[] rowStats = whatapStats.get(info.apiPath);
                 if (rowStats != null) for (long count : rowStats) totalCalls += count;
 
-                // [v11.4] 미사용 의심 등급 산출 로직
                 String suspicionScore = "";
                 int caseType = 0;
                 LocalDate thresholdDate = LocalDate.parse(LAST_COMMIT_DATE);
@@ -248,24 +250,28 @@ public class ApiExcelExporter {
                     }
                 }
 
-                // [v11.7] 데이터 매핑 ("팀"과 "담당자" 자리에 "" 추가) [cite: 2026-03-03]
-                String[] data = {String.valueOf(i + 1), REPO_NAME, info.apiPath, fullUrl, info.repoPath,
+                // [v11.9] 데이터 배열 매핑 (추출일자 포함) [cite: 2026-03-06]
+                // "추출일자"는 셀에서 Date 타입 처리를 위해 아래 루프에서 setCellValue(LocalDate)로 별도 처리합니다.
+                String[] data = {String.valueOf(i + 1), "", REPO_NAME, info.apiPath, fullUrl, info.repoPath,
                         info.controllerName, info.methodName, info.isDeprecated,
                         info.git1[0], info.git1[1], info.git1[2], info.git2[0], info.git2[1], info.git2[2],
                         info.git3[0], info.git3[1], info.git3[2],
-                        String.valueOf(totalCalls), "", "", "", suspicionScore, "", // 19:팀, 20:담당자, 22:검토결과
+                        String.valueOf(totalCalls), "", "", "", suspicionScore, "",
                         "", "", "", "", ""};
 
                 for (int j = 0; j < data.length; j++) {
                     Cell cell = row.createCell(j);
-                    if (j == 17) { // 호출건수 강조 로직
+                    if (j == 1) { // 추출일자 날짜 서식 적용 [cite: 2026-03-06]
+                        cell.setCellValue(now);
+                        cell.setCellStyle(dateD);
+                    } else if (j == 18) { // 호출건수 강조 로직 (인덱스 18로 이동) [cite: 2026-03-06]
                         cell.setCellValue(totalCalls);
                         if (totalCalls >= 0 && totalCalls <= NOT_USE_LIMIT_COUNT) {
                             cell.setCellStyle(highRiskS);
                         } else {
                             cell.setCellStyle(numD);
                         }
-                    } else if (j == 21) { // [v11.7] 미사용 의심건 인덱스 수정 (20 -> 21) [cite: 2026-02-23]
+                    } else if (j == 22) { // 미사용 의심건 인덱스 수정 (21 -> 22) [cite: 2026-03-06]
                         cell.setCellValue(suspicionScore);
                         if (caseType == 1) cell.setCellStyle(highRiskS);
                         else if (caseType == 2) cell.setCellStyle(midRiskS);
@@ -273,9 +279,9 @@ public class ApiExcelExporter {
                         else cell.setCellStyle(centerD);
                     } else {
                         cell.setCellValue(data[j]);
-                        boolean isCenter = (j==0 || j==1 || (j>=5 && j<=16) || (j>=18));
-                        if (j == 7 && isDep) cell.setCellStyle(depColumnStyle);
-                        else if (j == 3) {
+                        boolean isCenter = (j==0 || j==2 || (j>=6 && j<=17) || (j>=19));
+                        if (j == 8 && isDep) cell.setCellStyle(depColumnStyle);
+                        else if (j == 4) {
                             cell.setCellStyle(linkD);
                             try {
                                 String encodedUrl = fullUrl.replace("{", "%7B").replace("}", "%7D");
@@ -288,10 +294,11 @@ public class ApiExcelExporter {
                 }
             }
 
-            sheet.setColumnWidth(2, 14500); sheet.setColumnWidth(3, 8500);
-            sheet.setColumnWidth(4, 11500); sheet.setColumnWidth(5, 5500); sheet.setColumnWidth(6, 5500);
-            sheet.setColumnWidth(19, 4000); // [v11.7] '팀' 컬럼 너비 설정 (인덱스 19로 변경) [cite: 2026-03-03]
-            for (int i = 8; i < headers.length; i++) if(i != 19) sheet.setColumnWidth(i, 4200);
+            sheet.setColumnWidth(1, 4000); // 추출일자 너비 [cite: 2026-03-06]
+            sheet.setColumnWidth(3, 14500); sheet.setColumnWidth(4, 8500);
+            sheet.setColumnWidth(5, 11500); sheet.setColumnWidth(6, 5500); sheet.setColumnWidth(7, 5500);
+            sheet.setColumnWidth(20, 4000); // 팀 컬럼 너비
+            for (int i = 9; i < headers.length; i++) if(i != 20) sheet.setColumnWidth(i, 4200);
 
             workbook.write(fos);
             addLog("\n[SUCCESS] 통합 엑셀 저장 완료: " + finalExcelFile.getName());
@@ -463,7 +470,7 @@ public class ApiExcelExporter {
     private static void saveInitialLogsToPath() {
         try (FileWriter fw = new FileWriter(logPath, false); PrintWriter pw = new PrintWriter(fw)) {
             pw.println("===============================================================");
-            pw.println("[START] " + REPO_NAME + " API 추출 및 Whatap 통합 시작 (v11.8)");
+            pw.println("[START] " + REPO_NAME + " API 추출 및 Whatap 통합 시작 (v11.9)");
             pw.println("[INFO] 분석 경로: " + ROOT_PATH);
             pw.println("===============================================================");
             synchronized (RUNTIME_LOGS) { for (String l : RUNTIME_LOGS) pw.println(l); }
