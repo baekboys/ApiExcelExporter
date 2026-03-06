@@ -25,8 +25,8 @@ import java.util.stream.Collectors;
  * 프로젝트명: ApiExcelExporter (Bitbucket 관리형)
  * Version: 11.7 (검토 담당자 옆 '팀' 컬럼 및 드롭다운 목록 추가)
  * 반영사항:
- * 1. [컬럼 추가] '담당자(필요시)' 우측에 '팀' 컬럼 추가 [cite: 2026-02-23]
- * 2. [기능 추가] '미사용 검토결과' 컬럼에 선택 목록(O, △, X) 유효성 검사 적용 [cite: 2026-02-23]
+ * 1. [컬럼 변경] '팀'과 '담당자' 컬럼 순서 교체 및 명칭 변경 (담당자(필요시) -> 담당자) [cite: 2026-03-03]
+ * 2. [기능 유지] '미사용 검토결과' 컬럼에 선택 목록(O, △, X) 유효성 검사 적용 유지 [cite: 2026-02-23]
  * 3. [시각화] 저호출 API(0 < 건수 <= Limit) 셀 음영(분홍) 및 폰트(빨강) 적용 유지 [cite: 2026-02-23]
  * 4. [복구] v11.2의 주요 변수 상세 한글 주석 및 항목별 설정 로드 로그 시스템 유지 [cite: 2026-02-05]
  * 5. [성능] i9-13900 32스레드 환경 최적화 parallelStream 분석 유지 [cite: 2026-02-23]
@@ -191,10 +191,10 @@ public class ApiExcelExporter {
 
             sheet.createFreezePane(3, 1);
 
-            // [v11.7] '팀' 컬럼 추가 및 헤더 인덱스 시프트 반영 [cite: 2026-02-23]
+            // [v11.7] '팀'과 '담당자' 컬럼 순서 교체 및 명칭 변경 [cite: 2026-03-03]
             String[] headers = {"순번","레파지토리","API 경로","전체 URL","repository path","컨트롤러명","호출메소드",
                     "Deprecated","커밋일자1","커밋터1","코멘트1","커밋일자2","커밋터2","코멘트2","커밋일자3","커밋터3","코멘트3",
-                    "호출건수(APM추출필요)", "프로그램ID(필요시)", "담당자(필요시)", "팀", "미사용 의심건", "미사용 검토결과",
+                    "호출건수(APM추출필요)", "프로그램ID(필요시)", "팀", "담당자", "미사용 의심건", "미사용 검토결과",
                     "조치예정일자", "조치일자", "관련티켓", "조치담당자", "비고"};
 
             Row headerRow = sheet.createRow(0);
@@ -204,7 +204,7 @@ public class ApiExcelExporter {
                 if (i <= 3) cell.setCellStyle(greyH);
                 else if (i <= 6) cell.setCellStyle(yellowH);
                 else if (i <= 17) cell.setCellStyle(orangeH);
-                else if (i <= 20) cell.setCellStyle(greenH); // '팀' 컬럼(20)까지 녹색 테마 확장 [cite: 2026-02-23]
+                else if (i <= 20) cell.setCellStyle(greenH); // '담당자'(20)까지 녹색 테마 확장 [cite: 2026-02-23]
                 else if (i <= 22) cell.setCellStyle(blueH);  // '미사용 검토결과'(22)까지 블루 테마 [cite: 2026-02-23]
                 else cell.setCellStyle(ivoryH);
             }
@@ -246,12 +246,12 @@ public class ApiExcelExporter {
                     }
                 }
 
-                // [v11.7] 데이터 매핑 ("팀" 컬럼 자리에 "" 추가 및 인덱스 시프트) [cite: 2026-02-23]
+                // [v11.7] 데이터 매핑 ("팀"과 "담당자" 자리에 "" 추가) [cite: 2026-03-03]
                 String[] data = {String.valueOf(i + 1), REPO_NAME, info.apiPath, fullUrl, info.repoPath,
                         info.controllerName, info.methodName, info.isDeprecated,
                         info.git1[0], info.git1[1], info.git1[2], info.git2[0], info.git2[1], info.git2[2],
                         info.git3[0], info.git3[1], info.git3[2],
-                        String.valueOf(totalCalls), "", "", "", suspicionScore, "", // 20:팀, 22:검토결과
+                        String.valueOf(totalCalls), "", "", "", suspicionScore, "", // 19:팀, 20:담당자, 22:검토결과
                         "", "", "", "", ""};
 
                 for (int j = 0; j < data.length; j++) {
@@ -288,8 +288,8 @@ public class ApiExcelExporter {
 
             sheet.setColumnWidth(2, 14500); sheet.setColumnWidth(3, 8500);
             sheet.setColumnWidth(4, 11500); sheet.setColumnWidth(5, 5500); sheet.setColumnWidth(6, 5500);
-            sheet.setColumnWidth(20, 4000); // [v11.7] '팀' 컬럼 너비 설정 [cite: 2026-02-23]
-            for (int i = 8; i < headers.length; i++) if(i != 20) sheet.setColumnWidth(i, 4200);
+            sheet.setColumnWidth(19, 4000); // [v11.7] '팀' 컬럼 너비 설정 (인덱스 19로 변경) [cite: 2026-03-03]
+            for (int i = 8; i < headers.length; i++) if(i != 19) sheet.setColumnWidth(i, 4200);
 
             workbook.write(fos);
             addLog("\n[SUCCESS] 통합 엑셀 저장 완료: " + finalExcelFile.getName());
