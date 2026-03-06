@@ -16,12 +16,13 @@ import java.util.stream.Collectors;
 
 /**
  * 프로젝트명: WhatapApiCounter (연간 통계 전수 추출 도구)
- * Version: 5.5 (보안 강화 및 pcode 파라미터화 버전)
+ * Version: 5.6 (파일명 간소화 및 날짜 형식 변경)
  * [수정 사항]
  * 1. [파라미터화] pcode 값을 config.properties에서 로드할 수 있도록 수정 (기본값: 8)
  * 2. [보안 강화] WHATAP_URL, OUTPUT_DIR 기본값을 빈 값("")으로 수정하여 정보 노출 방지
  * 3. [로직 보존] v5.3의 모든 상세 주석, .log 파일 실시간 생성 및 parallelStream 수집 로직 유지
  * 4. [연동] generateExcelReport를 public으로 유지하여 ApiExcelExporter v11.2와 연동 보장
+ * 5. [파일명] 생성 시 날짜 형식 변경 (yyyy-MM-dd_추출) 및 "추출결과" 텍스트 제거 [cite: 2026-03-06]
  */
 public class WhatapApiCounter {
 
@@ -110,13 +111,14 @@ public class WhatapApiCounter {
         loadConfig();
 
         LocalDateTime execStartTime = LocalDateTime.now();
-        String timestamp = execStartTime.format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
+        // [v5.6] 날짜 형식 변경 (yyyy-MM-dd_추출) [cite: 2026-03-06]
+        String timestamp = execStartTime.format(DateTimeFormatter.ofPattern("yyyy-MM-dd'_추출'"));
         DateTimeFormatter logFmt = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
         initLogFile(timestamp);
 
         addLog("===============================================================");
-        addLog("[START] WhatapApiCounter v5.5 실행 시작: " + execStartTime.format(logFmt));
+        addLog("[START] WhatapApiCounter v5.6 실행 시작: " + execStartTime.format(logFmt));
         addLog("===============================================================");
 
         getApiStats();
@@ -300,7 +302,8 @@ public class WhatapApiCounter {
     public static void generateExcelReport(String ts) {
         if (OUTPUT_DIR.isEmpty()) { System.err.println("[ERROR] OUTPUT_DIR이 비어있어 엑셀을 생성할 수 없습니다."); return; }
 
-        String fileName = String.format("Whatap통계추출결과_(%s)_(%s~%s)_(%s).xlsx", WHATAP_OKINDS_NAME, START_DATE, END_DATE, ts);
+        // [v5.6] 명칭 간소화 ("추출결과" 제거) [cite: 2026-03-06]
+        String fileName = String.format("Whatap통계_(%s)_(%s~%s)_(%s).xlsx", WHATAP_OKINDS_NAME, START_DATE, END_DATE, ts);
         File file = new File(OUTPUT_DIR, fileName);
         if (!file.getParentFile().exists()) file.getParentFile().mkdirs();
 

@@ -23,13 +23,14 @@ import java.util.stream.Collectors;
 
 /**
  * 프로젝트명: ApiExcelExporter (Bitbucket 관리형)
- * Version: 11.7 (검토 담당자 옆 '팀' 컬럼 및 드롭다운 목록 추가)
+ * Version: 11.8 (파일명 간소화 및 날짜 형식 변경)
  * 반영사항:
  * 1. [컬럼 변경] '팀'과 '담당자' 컬럼 순서 교체 및 명칭 변경 (담당자(필요시) -> 담당자) [cite: 2026-03-03]
  * 2. [기능 유지] '미사용 검토결과' 컬럼에 선택 목록(O, △, X) 유효성 검사 적용 유지 [cite: 2026-02-23]
  * 3. [시각화] 저호출 API(0 < 건수 <= Limit) 셀 음영(분홍) 및 폰트(빨강) 적용 유지 [cite: 2026-02-23]
  * 4. [복구] v11.2의 주요 변수 상세 한글 주석 및 항목별 설정 로드 로그 시스템 유지 [cite: 2026-02-05]
  * 5. [성능] i9-13900 32스레드 환경 최적화 parallelStream 분석 유지 [cite: 2026-02-23]
+ * 6. [파일명] 생성 시 날짜 형식 변경 (yyyy-MM-dd_추출) 및 "추출결과" 텍스트 제거 [cite: 2026-03-06]
  */
 public class ApiExcelExporter {
 
@@ -85,11 +86,12 @@ public class ApiExcelExporter {
         if (!dir.exists()) dir.mkdirs();
 
         long startTime = System.currentTimeMillis();
-        String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
+        // [v11.8] 날짜 형식 변경 (yyyy-MM-dd_추출) [cite: 2026-03-06]
+        String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd'_추출'"));
 
         // 2. [로그] 실행 시작 정보 상세 기록
         System.out.println("===============================================================");
-        System.out.println("[START] " + REPO_NAME + " API 추출 및 Whatap 통합 시작 (v11.7)");
+        System.out.println("[START] " + REPO_NAME + " API 추출 및 Whatap 통합 시작 (v11.8)");
         if (isConfigLoaded) System.out.println("[INFO] 설정 파일 로드 성공: 외부 config.properties 사용.");
         else System.out.println("[INFO] 설정 파일 로드 실패: 기본값이 비어 있어 분석이 진행되지 않을 수 있습니다.");
         System.out.println("[INFO] 현재 분석 경로: " + ROOT_PATH);
@@ -138,8 +140,8 @@ public class ApiExcelExporter {
 
         allApiList.sort(Comparator.comparing(ApiInfo::getApiPath));
 
-        // 4. 결과 파일명 확정
-        String baseFileName = String.format("API현황추출결과__(%s)_(컨트롤러  %d개 & API %d개)_(%s)",
+        // 4. 결과 파일명 확정 [v11.8] 명칭 간소화 적용 [cite: 2026-03-06]
+        String baseFileName = String.format("API목록_(%s)_(컨트롤러  %d개 & API %d개)_(%s)",
                 REPO_NAME, totalFiles, allApiList.size(), timestamp);
 
         logPath = OUTPUT_DIR + File.separator + baseFileName + ".log";
@@ -461,7 +463,7 @@ public class ApiExcelExporter {
     private static void saveInitialLogsToPath() {
         try (FileWriter fw = new FileWriter(logPath, false); PrintWriter pw = new PrintWriter(fw)) {
             pw.println("===============================================================");
-            pw.println("[START] " + REPO_NAME + " API 추출 및 Whatap 통합 시작 (v11.7)");
+            pw.println("[START] " + REPO_NAME + " API 추출 및 Whatap 통합 시작 (v11.8)");
             pw.println("[INFO] 분석 경로: " + ROOT_PATH);
             pw.println("===============================================================");
             synchronized (RUNTIME_LOGS) { for (String l : RUNTIME_LOGS) pw.println(l); }
