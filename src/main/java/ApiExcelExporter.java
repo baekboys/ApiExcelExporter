@@ -139,7 +139,7 @@ public class ApiExcelExporter {
         allApiList.sort(Comparator.comparing(ApiInfo::getApiPath));
 
         // 4. 결과 파일명 확정
-        String baseFileName = String.format("API 현황 추출결과__(%s)_(컨트롤러  %d개 & API %d개)_(%s)",
+        String baseFileName = String.format("API현황추출결과__(%s)_(컨트롤러  %d개 & API %d개)_(%s)",
                 REPO_NAME, totalFiles, allApiList.size(), timestamp);
 
         logPath = OUTPUT_DIR + File.separator + baseFileName + ".log";
