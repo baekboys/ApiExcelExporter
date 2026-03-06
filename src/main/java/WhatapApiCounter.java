@@ -300,7 +300,7 @@ public class WhatapApiCounter {
     public static void generateExcelReport(String ts) {
         if (OUTPUT_DIR.isEmpty()) { System.err.println("[ERROR] OUTPUT_DIR이 비어있어 엑셀을 생성할 수 없습니다."); return; }
 
-        String fileName = String.format("Whatap 통계 추출결과_(v5.3)_(%s)_(%s~%s)_(%s).xlsx", WHATAP_OKINDS_NAME, START_DATE, END_DATE, ts);
+        String fileName = String.format("Whatap 통계 추출결과_(%s)_(%s~%s)_(%s).xlsx", WHATAP_OKINDS_NAME, START_DATE, END_DATE, ts);
         File file = new File(OUTPUT_DIR, fileName);
         if (!file.getParentFile().exists()) file.getParentFile().mkdirs();
 
