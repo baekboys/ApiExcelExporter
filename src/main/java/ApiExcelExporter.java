@@ -23,12 +23,12 @@ import java.util.stream.Collectors;
 
 /**
  * 프로젝트명: ApiExcelExporter (Bitbucket 관리형)
- * Version: 11.9 (추출일자 컬럼 추가 및 날짜 서식 적용)
+ * Version: 12.1 (한글 인코딩 깨짐 수정)
  * 반영사항:
- * 1. [기능 추가] '순번' 옆에 '추출일자' 컬럼 추가 및 엑셀 Date 서식(yyyy-mm-dd) 적용 [cite: 2026-03-06]
- * 2. [컬럼 관리] '팀'과 '담당자' 컬럼 순서 및 명칭 유지 (팀 -> 담당자) [cite: 2026-03-03]
- * 3. [기능 유지] '미사용 검토결과' 컬럼 드롭다운 목록(O, △, X) 적용 (인덱스 자동 조정) [cite: 2026-02-23]
- * 4. [시각화] 저호출 API 셀 음영(분홍/빨강) 및 미사용 의심 3단계 테마 유지 [cite: 2026-02-23]
+ * 1. [버그 수정] config.properties 로드 시 UTF-8 인코딩 명시 (한글 깨짐 해결) [cite: 2026-03-09]
+ * 2. [기능 유지] '팀'과 '담당자' 정보를 config.properties에서 입력받아 엑셀에 자동 매핑 [cite: 2026-03-09]
+ * 3. [기능 유지] '순번' 옆 '추출일자' 컬럼 및 엑셀 Date 서식(yyyy-mm-dd) 적용 유지 [cite: 2026-03-06]
+ * 4. [컬럼 관리] '팀'과 '담당자' 컬럼 순서 및 명칭 유지 (팀 -> 담당자) [cite: 2026-03-03]
  * 5. [성능] i9-13900 32스레드 환경 최적화 parallelStream 분석 유지 [cite: 2026-02-23]
  * 6. [파일명] 간소화된 파일명 규칙 및 날짜 형식(yyyy-MM-dd_추출) 유지 [cite: 2026-03-06]
  */
@@ -52,6 +52,12 @@ public class ApiExcelExporter {
 
     /** [핵심변수 5] Git 실행 경로 (환경변수 미등록 대비) */
     private static String GIT_BIN_PATH = "git";
+
+    /** [v12.0 신규] 관리용 팀 명칭: config.properties에서 로드합니다. [cite: 2026-03-09] */
+    private static String TEAM_NAME = "";
+
+    /** [v12.0 신규] 관리용 담당자 명칭: config.properties에서 로드합니다. [cite: 2026-03-09] */
+    private static String MANAGER_NAME = "";
 
     /** [v11.3 신규] 미사용 의심 판별 기준 호출수: 이 횟수 이하이면 별점이 부여됩니다. */
     private static long NOT_USE_LIMIT_COUNT = 0;
@@ -91,11 +97,12 @@ public class ApiExcelExporter {
 
         // 2. [로그] 실행 시작 정보 상세 기록
         System.out.println("===============================================================");
-        System.out.println("[START] " + REPO_NAME + " API 추출 및 Whatap 통합 시작 (v11.9)");
+        System.out.println("[START] " + REPO_NAME + " API 추출 및 Whatap 통합 시작 (v12.1)");
         if (isConfigLoaded) System.out.println("[INFO] 설정 파일 로드 성공: 외부 config.properties 사용.");
         else System.out.println("[INFO] 설정 파일 로드 실패: 기본값이 비어 있어 분석이 진행되지 않을 수 있습니다.");
         System.out.println("[INFO] 현재 분석 경로: " + ROOT_PATH);
         System.out.println("[INFO] Git 실행 경로: " + GIT_BIN_PATH);
+        System.out.println("[INFO] 관리 정보: 팀[" + TEAM_NAME + "] / 담당자[" + MANAGER_NAME + "]"); // v12.0 로그 추가
         System.out.println("[INFO] 미사용 기준: 호출수 " + NOT_USE_LIMIT_COUNT + "회 이하 / 커밋 " + LAST_COMMIT_DATE + " 이전");
         System.out.println("===============================================================");
 
@@ -171,7 +178,7 @@ public class ApiExcelExporter {
             CellStyle numD = workbook.createCellStyle(); numD.setDataFormat(workbook.createDataFormat().getFormat("#,##0"));
             numD.setBorderBottom(BorderStyle.THIN); numD.setBorderTop(BorderStyle.THIN); numD.setBorderLeft(BorderStyle.THIN); numD.setBorderRight(BorderStyle.THIN);
 
-            // [v11.9] 날짜 데이터용 스타일 (yyyy-mm-dd) [cite: 2026-03-06]
+            // [v11.9] 날짜 데이터용 스타일 (yyyy-mm-dd)
             CellStyle dateD = createStyle(workbook, null, false, true);
             dateD.setDataFormat(workbook.createDataFormat().getFormat("yyyy-mm-dd"));
 
@@ -192,9 +199,9 @@ public class ApiExcelExporter {
             linkD.setFont(linkFont);
             CellStyle depColumnStyle = createStyle(workbook, IndexedColors.GREY_25_PERCENT.getIndex(), false, true);
 
-            sheet.createFreezePane(4, 1); // 추출일자 추가로 틀 고정 범위 4로 변경 [cite: 2026-03-06]
+            sheet.createFreezePane(4, 1); // 추출일자 추가로 틀 고정 범위 4로 변경
 
-            // [v11.9] '추출일자' 컬럼 추가 및 헤더 인덱스 재조정 [cite: 2026-03-06]
+            // [v11.9] '추출일자' 컬럼 추가 및 헤더 인덱스 재조정
             String[] headers = {"순번","추출일자","레파지토리","API 경로","전체 URL","repository path","컨트롤러명","호출메소드",
                     "Deprecated","커밋일자1","커밋터1","코멘트1","커밋일자2","커밋터2","코멘트2","커밋일자3","커밋터3","코멘트3",
                     "호출건수(APM추출필요)", "프로그램ID(필요시)", "팀", "담당자", "미사용 의심건", "미사용 검토결과",
@@ -204,7 +211,7 @@ public class ApiExcelExporter {
             for (int i = 0; i < headers.length; i++) {
                 Cell cell = headerRow.createCell(i);
                 cell.setCellValue(headers[i]);
-                if (i <= 4) cell.setCellStyle(greyH);      // 순번~전체URL (0~4) [cite: 2026-03-06]
+                if (i <= 4) cell.setCellStyle(greyH);      // 순번~전체URL (0~4)
                 else if (i <= 7) cell.setCellStyle(yellowH); // path~메소드 (5~7)
                 else if (i <= 18) cell.setCellStyle(orangeH); // Dep~호출건수 (8~18)
                 else if (i <= 21) cell.setCellStyle(greenH);  // ID~담당자 (19~21)
@@ -213,7 +220,7 @@ public class ApiExcelExporter {
             }
             sheet.setAutoFilter(new CellRangeAddress(0, 0, 0, headers.length - 1));
 
-            // [v11.9] 데이터 유효성 설정 (미사용 검토결과 컬럼: 23번) [cite: 2026-03-06]
+            // [v11.9] 데이터 유효성 설정 (미사용 검토결과 컬럼: 23번)
             DataValidationHelper validationHelper = sheet.getDataValidationHelper();
             String[] reviewOptions = {"O(미사용)", "△(판단불가)", "X(사용)"};
             DataValidationConstraint constraint = validationHelper.createExplicitListConstraint(reviewOptions);
@@ -250,28 +257,27 @@ public class ApiExcelExporter {
                     }
                 }
 
-                // [v11.9] 데이터 배열 매핑 (추출일자 포함) [cite: 2026-03-06]
-                // "추출일자"는 셀에서 Date 타입 처리를 위해 아래 루프에서 setCellValue(LocalDate)로 별도 처리합니다.
+                // [v12.0] 데이터 배열 매핑 (프로퍼티에서 로드된 TEAM_NAME, MANAGER_NAME 적용) [cite: 2026-03-09]
                 String[] data = {String.valueOf(i + 1), "", REPO_NAME, info.apiPath, fullUrl, info.repoPath,
                         info.controllerName, info.methodName, info.isDeprecated,
                         info.git1[0], info.git1[1], info.git1[2], info.git2[0], info.git2[1], info.git2[2],
                         info.git3[0], info.git3[1], info.git3[2],
-                        String.valueOf(totalCalls), "", "", "", suspicionScore, "",
+                        String.valueOf(totalCalls), "", TEAM_NAME, MANAGER_NAME, suspicionScore, "",
                         "", "", "", "", ""};
 
                 for (int j = 0; j < data.length; j++) {
                     Cell cell = row.createCell(j);
-                    if (j == 1) { // 추출일자 날짜 서식 적용 [cite: 2026-03-06]
+                    if (j == 1) { // 추출일자 날짜 서식 적용
                         cell.setCellValue(now);
                         cell.setCellStyle(dateD);
-                    } else if (j == 18) { // 호출건수 강조 로직 (인덱스 18로 이동) [cite: 2026-03-06]
+                    } else if (j == 18) { // 호출건수 강조 로직 (인덱스 18로 이동)
                         cell.setCellValue(totalCalls);
                         if (totalCalls >= 0 && totalCalls <= NOT_USE_LIMIT_COUNT) {
                             cell.setCellStyle(highRiskS);
                         } else {
                             cell.setCellStyle(numD);
                         }
-                    } else if (j == 22) { // 미사용 의심건 인덱스 수정 (21 -> 22) [cite: 2026-03-06]
+                    } else if (j == 22) { // 미사용 의심건 인덱스 수정 (21 -> 22)
                         cell.setCellValue(suspicionScore);
                         if (caseType == 1) cell.setCellStyle(highRiskS);
                         else if (caseType == 2) cell.setCellStyle(midRiskS);
@@ -294,7 +300,7 @@ public class ApiExcelExporter {
                 }
             }
 
-            sheet.setColumnWidth(1, 4000); // 추출일자 너비 [cite: 2026-03-06]
+            sheet.setColumnWidth(1, 4000); // 추출일자 너비
             sheet.setColumnWidth(3, 14500); sheet.setColumnWidth(4, 8500);
             sheet.setColumnWidth(5, 11500); sheet.setColumnWidth(6, 5500); sheet.setColumnWidth(7, 5500);
             sheet.setColumnWidth(20, 4000); // 팀 컬럼 너비
@@ -315,13 +321,14 @@ public class ApiExcelExporter {
         return dates.stream().max(Comparator.naturalOrder()).orElse(null);
     }
 
-    /** [복구] 설정값을 한 줄당 하나씩 인식하여 상세 로그를 남깁니다. */
+    /** [지적 반영] 인코딩 문제를 해결하기 위해 UTF-8 Reader를 사용하여 로드합니다. [cite: 2026-03-09] */
     private static void loadExternalConfig() {
         Properties prop = new Properties();
         File configFile = new File("config.properties");
         if (configFile.exists()) {
-            try (InputStream is = new FileInputStream(configFile)) {
-                prop.load(is);
+            // [v12.1] InputStream 대신 Reader를 사용하여 UTF-8로 명시적 로드 [cite: 2026-03-09]
+            try (InputStreamReader isr = new InputStreamReader(new FileInputStream(configFile), StandardCharsets.UTF_8)) {
+                prop.load(isr);
                 System.out.println("[LOG] config.properties 설정 로드 상세 내역:");
 
                 if (prop.getProperty("REPO_NAME") != null) {
@@ -344,6 +351,12 @@ public class ApiExcelExporter {
                     GIT_BIN_PATH = prop.getProperty("GIT_BIN_PATH").trim();
                     System.out.println("  > GIT_BIN_PATH   : " + GIT_BIN_PATH);
                 }
+                // [v12.0 신규] 팀 및 담당자 정보 로드
+                TEAM_NAME = prop.getProperty("TEAM_NAME", "").trim();
+                System.out.println("  > TEAM_NAME      : " + TEAM_NAME);
+                MANAGER_NAME = prop.getProperty("MANAGER_NAME", "").trim();
+                System.out.println("  > MANAGER_NAME   : " + MANAGER_NAME);
+
                 if (prop.getProperty("NOT_USE_LIMIT_COUNT") != null) {
                     NOT_USE_LIMIT_COUNT = Long.parseLong(prop.getProperty("NOT_USE_LIMIT_COUNT").trim());
                     System.out.println("  > NOT_USE_LIMIT  : " + NOT_USE_LIMIT_COUNT + "건 이하");
@@ -470,7 +483,7 @@ public class ApiExcelExporter {
     private static void saveInitialLogsToPath() {
         try (FileWriter fw = new FileWriter(logPath, false); PrintWriter pw = new PrintWriter(fw)) {
             pw.println("===============================================================");
-            pw.println("[START] " + REPO_NAME + " API 추출 및 Whatap 통합 시작 (v11.9)");
+            pw.println("[START] " + REPO_NAME + " API 추출 및 Whatap 통합 시작 (v12.1)");
             pw.println("[INFO] 분석 경로: " + ROOT_PATH);
             pw.println("===============================================================");
             synchronized (RUNTIME_LOGS) { for (String l : RUNTIME_LOGS) pw.println(l); }
