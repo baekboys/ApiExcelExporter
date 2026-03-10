@@ -24,12 +24,12 @@ import java.util.stream.Collectors;
 
 /**
  * 프로젝트명: ApiExcelExporter (Bitbucket 관리형)
- * Version: 13.3 (API 발견 상세 로그 기능 복구)
+ * Version: 13.4 ('관련메뉴(미사용시)' 자동 매핑 기능 추가)
  * 반영사항:
- * 1. [로그 복구] extraction 메소드 내 API 발견 시 StringBuilder에 상세 기록 추가 (└ [Found] 로직) [cite: 2026-03-10]
- * 2. [기능 유지] REST API 지능형 분석: 가변인자 및 단순 액션 제외 핵심 리소스명 추출 [cite: 2026-03-10]
- * 3. [기능 유지] 주석 3종(전체, description, ApiOperation) 추출 및 왼쪽 정렬 레이아웃 [cite: 2026-03-10]
- * 4. [시각 강조] 검토 필수 구역(24~27번) Thick 테두리 박스 시각화 및 노랑/주황/파랑 테마 [cite: 2026-03-09]
+ * 1. [자동화] '관련메뉴(미사용시)' 컬럼 우선순위 로직 적용 (ApiOperation > description > h3 > 주석첫줄) [cite: 2026-03-10]
+ * 2. [로그 유지] parallelStream 내부 로그 형식 및 API 발견 상세 로그 (└ [Found]) 유지 [cite: 2026-03-10]
+ * 3. [기능 유지] REST API 지능형 분석: 가변인자 및 단순 액션 제외 핵심 리소스명 추출 [cite: 2026-03-10]
+ * 4. [주석 유지] 소스 코드 내 모든 상세 로직 주석 및 Javadoc 완벽 보존 [cite: 2026-02-05]
  * 5. [성능] i9-13900 환경 최적화 parallelStream 분석 및 대량 데이터 안정성 확보 [cite: 2026-02-23]
  */
 public class ApiExcelExporter {
@@ -38,15 +38,34 @@ public class ApiExcelExporter {
     // [ 1. 내부 기본 설정부 ] - config.properties를 반드시 작성하세요.
     // ==========================================================================================
 
+    /** [핵심변수 1] 레파지토리 이름 */
     private static String REPO_NAME = "";
+
+    /** [핵심변수 2] 기본 도메인 주소  */
     private static String DOMAIN = "";
+
+    /** [핵심변수 3] 분석할 Java 소스 로컬 절대 경로 */
     private static String ROOT_PATH = "";
+
+    /** [핵심변수 4] 결과 저장 디렉토리 물리적 경로 */
     private static String OUTPUT_DIR = "";
+
+    /** [핵심변수 5] Git 실행 경로 (환경변수 미등록 대비) */
     private static String GIT_BIN_PATH = "git";
+
+    /** [v12.0 신규] 관리용 팀 명칭 */
     private static String TEAM_NAME = "";
+
+    /** [v12.0 신규] 관리용 담당자 명칭 */
     private static String MANAGER_NAME = "";
+
+    /** [v11.3 신규] 미사용 의심 판별 기준 호출수 */
     private static long NOT_USE_LIMIT_COUNT = 0;
+
+    /** [v11.3 신규] 미사용 의심 판별 기준일 (YYYY-MM-DD) */
     private static String LAST_COMMIT_DATE = "1900-01-01";
+
+    /** 설정 파일 로드 성공 여부 */
     private static boolean isConfigLoaded = false;
 
     // ==========================================================================================
@@ -61,6 +80,7 @@ public class ApiExcelExporter {
     // ==========================================================================================
 
     public static void main(String[] args) {
+        // 1. 설정값 먼저 로드 (항목별 상세 로그 출력 포함)
         loadExternalConfig();
 
         if (OUTPUT_DIR.isEmpty()) {
@@ -72,13 +92,16 @@ public class ApiExcelExporter {
         if (!dir.exists()) dir.mkdirs();
 
         long startTime = System.currentTimeMillis();
+        // [v11.8] 날짜 형식 변경 (yyyy-MM-dd_추출)
         String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd'_추출'"));
 
+        // 2. [로그] 실행 시작 정보 상세 기록
         System.out.println("===============================================================");
-        System.out.println("[START] " + REPO_NAME + " API 추출 및 Whatap 통합 시작 (v13.3)");
+        System.out.println("[START] " + REPO_NAME + " API 추출 및 Whatap 통합 시작 (v13.4)");
         System.out.println("[INFO] 관리 정보: 팀[" + TEAM_NAME + "] / 담당자[" + MANAGER_NAME + "]");
         System.out.println("===============================================================");
 
+        // 3. Whatap 통계 모듈 가동
         Map<String, long[]> whatapStats = WhatapApiCounter.getApiStats();
         WhatapApiCounter.generateExcelReport(timestamp);
 
@@ -115,6 +138,7 @@ public class ApiExcelExporter {
 
         allApiList.sort(Comparator.comparing(ApiInfo::getApiPath));
 
+        // 4. 결과 파일명 확정
         String baseFileName = String.format("API목록_(%s)_(컨트롤러  %d개 & API %d개)_(%s)",
                 REPO_NAME, totalFiles, allApiList.size(), timestamp);
 
@@ -123,6 +147,7 @@ public class ApiExcelExporter {
 
         File finalExcelFile = new File(OUTPUT_DIR, baseFileName + ".xlsx");
 
+        // 5. 엑셀 리포트 생성
         try (Workbook workbook = new XSSFWorkbook();
              FileOutputStream fos = new FileOutputStream(finalExcelFile)) {
 
@@ -131,7 +156,7 @@ public class ApiExcelExporter {
             Sheet sheet = workbook.createSheet(sheetName);
             CreationHelper helper = workbook.getCreationHelper();
 
-            // --- 스타일 정의 ---
+            // --- 셀 스타일 정의 ---
             CellStyle greyH = createStyle(workbook, IndexedColors.GREY_25_PERCENT.getIndex(), true, true);
             CellStyle yellowH = createStyle(workbook, IndexedColors.YELLOW.getIndex(), true, true);
             CellStyle orangeH = createStyle(workbook, IndexedColors.ORANGE.getIndex(), true, true);
@@ -146,6 +171,7 @@ public class ApiExcelExporter {
             CellStyle dateD = createStyle(workbook, null, false, true);
             dateD.setDataFormat(workbook.createDataFormat().getFormat("yyyy-mm-dd"));
 
+            // 박스 스타일 정의
             CellStyle blueH_TopLeft = createStyle(workbook, IndexedColors.LIGHT_CORNFLOWER_BLUE.getIndex(), true, true);
             blueH_TopLeft.setBorderTop(BorderStyle.THICK); blueH_TopLeft.setBorderLeft(BorderStyle.THICK);
             CellStyle blueH_Top = createStyle(workbook, IndexedColors.LIGHT_CORNFLOWER_BLUE.getIndex(), true, true);
@@ -238,11 +264,14 @@ public class ApiExcelExporter {
 
                 String autoProgId = autoExtractProgramId(info.apiPath);
 
+                // [v13.4] 관련메뉴 자동 매핑 로직 적용 [cite: 2026-03-10]
+                String autoRelatedMenu = autoPopulateRelatedMenu(info);
+
                 String[] data = {String.valueOf(i + 1), "", REPO_NAME, info.apiPath, fullUrl, info.repoPath,
                         info.controllerName, info.methodName, autoProgId, info.fullComment, info.descriptionTag, info.apiOperationValue,
                         info.isDeprecated, info.git1[0], info.git1[1], info.git1[2], info.git2[0], info.git2[1], info.git2[2],
                         info.git3[0], info.git3[1], info.git3[2], String.valueOf(totalCalls), suspicionScore,
-                        TEAM_NAME, MANAGER_NAME, "", "", "", "", "", "", ""};
+                        TEAM_NAME, MANAGER_NAME, "", autoRelatedMenu, "", "", "", "", ""};
 
                 boolean isLastRow = (i == allApiList.size() - 1);
 
@@ -263,6 +292,7 @@ public class ApiExcelExporter {
                         else cell.setCellStyle(centerD);
                     } else {
                         cell.setCellValue(data[j]);
+                        // 주석 3종 왼쪽 정렬 적용 [cite: 2026-03-10]
                         boolean isCenter = (j==0 || j==2 || (j>=6 && j<=8) || (j>=12 && j<=21) || (j>=24));
 
                         if (j == 12 && isDep) cell.setCellStyle(depColumnStyle);
@@ -309,6 +339,34 @@ public class ApiExcelExporter {
         } catch (Exception e) { addExceptionLog("엑셀 저장 중 오류", e); }
 
         addLog("\n[FINISH] 전체 분석 작업 종료: " + (System.currentTimeMillis() - startTime) / 1000 + "초 소요");
+    }
+
+    /** [v13.4] 관련메뉴(미사용시) 자동 매핑 헬퍼 로직 [cite: 2026-03-10]
+     * 우선순위: ApiOperation > description > Javadoc h3 태그 > 주석 첫 문장 */
+    private static String autoPopulateRelatedMenu(ApiInfo info) {
+        // 1. ApiOperation 우선순위 [cite: 2026-03-10]
+        if (info.apiOperationValue != null && !"-".equals(info.apiOperationValue) && !info.apiOperationValue.trim().isEmpty()) {
+            return info.apiOperationValue;
+        }
+        // 2. description 주석 우선순위 [cite: 2026-03-10]
+        if (info.descriptionTag != null && !"-".equals(info.descriptionTag) && !info.descriptionTag.trim().isEmpty()) {
+            return info.descriptionTag;
+        }
+        // 3. Javadoc 분석 (h3 태그 및 첫 문장) [cite: 2026-03-10]
+        if (info.fullComment != null && !"-".equals(info.fullComment)) {
+            // h3 태그 추출 시도 [cite: 2026-03-10]
+            Pattern h3Pattern = Pattern.compile("<h3>(.*?)</h3>", Pattern.CASE_INSENSITIVE);
+            Matcher matcher = h3Pattern.matcher(info.fullComment);
+            if (matcher.find()) return matcher.group(1).trim();
+
+            // 첫 문장/줄 추출 (구분자 기준) [cite: 2026-03-10]
+            String comment = info.fullComment.trim();
+            if (!comment.isEmpty()) {
+                String firstPart = comment.split("[.!?:]")[0];
+                return firstPart.trim().length() > 2 ? firstPart.trim() : comment;
+            }
+        }
+        return "-";
     }
 
     /** [v13.1] REST API 지능형 핵심 리소스명 추출 로직 유지 [cite: 2026-03-10] */
@@ -404,7 +462,6 @@ public class ApiExcelExporter {
                         }
                         info.apiOperationValue = extractAnnotationValue(method, "ApiOperation", "value");
                         apis.add(info);
-                        // [v13.3 로그 복구] API 발견 시 상세 로그 기록 [cite: 2026-03-10]
                         log.append("\n    └ [Found] ").append(info.apiPath);
                     }
                 }
@@ -466,7 +523,6 @@ public class ApiExcelExporter {
                             Matcher aM = Pattern.compile("@ApiOperation\\s*\\(\\s*value\\s*=\\s*\"([^\"]+)\"").matcher(headArea);
                             info.apiOperationValue = aM.find() ? aM.group(1) : "-";
                             apis.add(info);
-                            // [v13.3 로그 복구] Regex 기반 발견 시 상세 로그 기록 [cite: 2026-03-10]
                             log.append("\n    └ [Found-Regex] ").append(info.apiPath);
                         }
                     }
@@ -486,7 +542,7 @@ public class ApiExcelExporter {
     }
 
     private static void addLog(String msg) { System.out.println(msg); if (!logPath.isEmpty()) { try (FileWriter fw = new FileWriter(logPath, true); PrintWriter pw = new PrintWriter(fw)) { pw.println(msg); } catch (IOException ignored) {} } }
-    private static void saveInitialLogsToPath() { try (FileWriter fw = new FileWriter(logPath, false); PrintWriter pw = new PrintWriter(fw)) { pw.println("==============================================================="); pw.println("[START] " + REPO_NAME + " API 추출 및 Whatap 통합 시작 (v13.3)"); pw.println("==============================================================="); synchronized (RUNTIME_LOGS) { for (String l : RUNTIME_LOGS) pw.println(l); } } catch (IOException ignored) {} }
+    private static void saveInitialLogsToPath() { try (FileWriter fw = new FileWriter(logPath, false); PrintWriter pw = new PrintWriter(fw)) { pw.println("==============================================================="); pw.println("[START] " + REPO_NAME + " API 추출 및 Whatap 통합 시작 (v13.4)"); pw.println("==============================================================="); synchronized (RUNTIME_LOGS) { for (String l : RUNTIME_LOGS) pw.println(l); } } catch (IOException ignored) {} }
     private static void addExceptionLog(String title, Exception e) { StringWriter sw = new StringWriter(); e.printStackTrace(new PrintWriter(sw)); addLog("\n[ERROR] " + title + "\n" + sw.toString()); }
 
     private static List<String[]> getRecentGitHistories(String rel, String root, int c) {
