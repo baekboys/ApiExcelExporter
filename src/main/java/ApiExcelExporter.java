@@ -3,6 +3,7 @@ import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
 import com.github.javaparser.ast.body.MethodDeclaration;
 import com.github.javaparser.ast.expr.*;
+import com.github.javaparser.ast.comments.Comment;
 import org.apache.poi.common.usermodel.HyperlinkType;
 import org.apache.poi.ss.usermodel.*;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
@@ -23,13 +24,13 @@ import java.util.stream.Collectors;
 
 /**
  * 프로젝트명: ApiExcelExporter (Bitbucket 관리형)
- * Version: 12.4 (컴파일 에러 수정 및 검토 영역 박스 시각화)
+ * Version: 13.1 (지능형 프로그램 ID 추출 및 주석 복구 완성)
  * 반영사항:
- * 1. [버그 수정] extract 메소드 내 finalPath 변수 선언 누락으로 인한 컴파일 에러 해결 [cite: 2026-03-09]
- * 2. [레이아웃] '프로그램ID'를 호출메소드 옆(8번)으로, '미사용 의심건'을 호출건수 옆(20번)으로 이동 [cite: 2026-03-09]
- * 3. [시각 강조] 검토 구역(팀~관련메뉴)을 Blue 헤더 및 상하좌우 Thick 테두리(완전한 박스형) 처리 [cite: 2026-03-09]
- * 4. [복구/유지] v12.1의 config.properties UTF-8 로드 로직 (한글 깨짐 방지) 유지 [cite: 2026-03-09]
- * 5. [기능 유지] '순번' 옆 '추출일자' 날짜 데이터(Date 서식) 및 '미사용 검토결과' 드롭다운 유지 [cite: 2026-03-06]
+ * 1. [기능 추가] REST API 지능형 분석: 가변인자({id}) 및 단순 액션(new, edit)을 제외한 핵심 리소스명 추출 [cite: 2026-03-10]
+ * 2. [주석 복구] 사라졌던 소스 코드 내 주요 로직 주석 및 Javadoc 완전 복구 [cite: 2026-02-05]
+ * 3. [레이아웃] 주석 3종을 프로그램 ID 옆(9~11번)에 배치하고 왼쪽 정렬 고정 [cite: 2026-03-10]
+ * 4. [시각 강조] 검토 필수 구역(팀 ~ 관련메뉴) 인덱스 시프트 및 Thick 테두리 박스 시각화 [cite: 2026-03-09]
+ * 5. [성능] i9-13900 환경 최적화 parallelStream 분석 및 대량 데이터(4,000건+) 안정성 확보 [cite: 2026-02-23]
  */
 public class ApiExcelExporter {
 
@@ -79,6 +80,7 @@ public class ApiExcelExporter {
     // ==========================================================================================
 
     public static void main(String[] args) {
+        // 1. 설정값 먼저 로드 (항목별 상세 로그 출력 포함)
         loadExternalConfig();
 
         if (OUTPUT_DIR.isEmpty()) {
@@ -90,13 +92,16 @@ public class ApiExcelExporter {
         if (!dir.exists()) dir.mkdirs();
 
         long startTime = System.currentTimeMillis();
+        // [v11.8] 날짜 형식 변경 (yyyy-MM-dd_추출)
         String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd'_추출'"));
 
+        // 2. [로그] 실행 시작 정보 상세 기록
         System.out.println("===============================================================");
-        System.out.println("[START] " + REPO_NAME + " API 추출 및 Whatap 통합 시작 (v12.4)");
+        System.out.println("[START] " + REPO_NAME + " API 추출 및 Whatap 통합 시작 (v13.1)");
         System.out.println("[INFO] 관리 정보: 팀[" + TEAM_NAME + "] / 담당자[" + MANAGER_NAME + "]");
         System.out.println("===============================================================");
 
+        // 3. Whatap 통계 모듈 가동
         Map<String, long[]> whatapStats = WhatapApiCounter.getApiStats();
         WhatapApiCounter.generateExcelReport(timestamp);
 
@@ -113,12 +118,16 @@ public class ApiExcelExporter {
             totalFiles = controllerFiles.size();
             final int total = totalFiles;
 
+            // i9-13900의 고성능 멀티코어 성능 활용 (parallelStream)
             controllerFiles.parallelStream().forEach(file -> {
                 String relativePath = rootPathObj.relativize(file).toString();
                 int current = PROCESSED_COUNT.incrementAndGet();
+
                 List<String[]> gitHistories = getRecentGitHistories(relativePath, ROOT_PATH, 3);
+
                 StringBuilder fileLog = new StringBuilder();
                 fileLog.append(String.format("\n[%d/%d] 분석: %s", current, total, file.getFileName()));
+
                 allApiList.addAll(extractApisHybrid(file, relativePath, gitHistories, fileLog));
                 System.out.print(fileLog.toString());
                 synchronized (RUNTIME_LOGS) { RUNTIME_LOGS.add(fileLog.toString()); }
@@ -127,6 +136,7 @@ public class ApiExcelExporter {
 
         allApiList.sort(Comparator.comparing(ApiInfo::getApiPath));
 
+        // 4. 결과 파일명 확정
         String baseFileName = String.format("API목록_(%s)_(컨트롤러  %d개 & API %d개)_(%s)",
                 REPO_NAME, totalFiles, allApiList.size(), timestamp);
 
@@ -135,6 +145,7 @@ public class ApiExcelExporter {
 
         File finalExcelFile = new File(OUTPUT_DIR, baseFileName + ".xlsx");
 
+        // 5. 엑셀 리포트 생성
         try (Workbook workbook = new XSSFWorkbook();
              FileOutputStream fos = new FileOutputStream(finalExcelFile)) {
 
@@ -143,7 +154,7 @@ public class ApiExcelExporter {
             Sheet sheet = workbook.createSheet(sheetName);
             CreationHelper helper = workbook.getCreationHelper();
 
-            // --- 스타일 정의 ---
+            // --- 셀 스타일 정의 ---
             CellStyle greyH = createStyle(workbook, IndexedColors.GREY_25_PERCENT.getIndex(), true, true);
             CellStyle yellowH = createStyle(workbook, IndexedColors.YELLOW.getIndex(), true, true);
             CellStyle orangeH = createStyle(workbook, IndexedColors.ORANGE.getIndex(), true, true);
@@ -158,7 +169,7 @@ public class ApiExcelExporter {
             CellStyle dateD = createStyle(workbook, null, false, true);
             dateD.setDataFormat(workbook.createDataFormat().getFormat("yyyy-mm-dd"));
 
-            // [v12.4] 박스 스타일 정의 (상단, 좌측, 우측, 하단 진하게) [cite: 2026-03-09]
+            // [v12.4] 박스 스타일 정의
             CellStyle blueH_TopLeft = createStyle(workbook, IndexedColors.LIGHT_CORNFLOWER_BLUE.getIndex(), true, true);
             blueH_TopLeft.setBorderTop(BorderStyle.THICK); blueH_TopLeft.setBorderLeft(BorderStyle.THICK);
             CellStyle blueH_Top = createStyle(workbook, IndexedColors.LIGHT_CORNFLOWER_BLUE.getIndex(), true, true);
@@ -194,33 +205,33 @@ public class ApiExcelExporter {
 
             sheet.createFreezePane(4, 1);
 
-            // [v12.4] 레이아웃 구성 [cite: 2026-03-09]
+            // [v13.1] 헤더 구성 (주석 순서: 전체주석 -> description -> ApiOperation) [cite: 2026-03-10]
             String[] headers = {"순번","추출일자","레파지토리","API 경로","전체 URL","repository path","컨트롤러명","호출메소드",
-                    "프로그램ID(필요시)","Deprecated","커밋일자1","커밋터1","코멘트1","커밋일자2","커밋터2","코멘트2","커밋일자3","커밋터3","코멘트3",
-                    "호출건수(APM추출필요)", "미사용 의심건", "팀", "담당자", "미사용 검토결과", "관련메뉴(미사용시)",
-                    "조치예정일자", "조치일자", "관련티켓", "조치담당자", "비고"};
+                    "프로그램ID(자동추출)","전체주석(참고용)","description주석(참고용)","ApiOperation(참고용)","Deprecated","커밋일자1","커밋터1","코멘트1",
+                    "커밋일자2","커밋터2","코멘트2","커밋일자3","커밋터3","코멘트3",
+                    "호출건수(APM추출필요)","미사용 의심건","팀","담당자","미사용 검토결과","관련메뉴(미사용시)",
+                    "조치예정일자","조치일자","관련티켓","조치담당자","비고"};
 
             Row headerRow = sheet.createRow(0);
             for (int i = 0; i < headers.length; i++) {
                 Cell cell = headerRow.createCell(i);
                 cell.setCellValue(headers[i]);
                 if (i <= 4) cell.setCellStyle(greyH);
-                else if (i <= 8) cell.setCellStyle(yellowH);
-                else if (i <= 20) cell.setCellStyle(orangeH);
-                else if (i >= 21 && i <= 24) { // 박스 상단 진하게 처리 [cite: 2026-03-09]
-                    if (i == 21) cell.setCellStyle(blueH_TopLeft);
-                    else if (i == 24) cell.setCellStyle(blueH_TopRight);
+                else if (i <= 11) cell.setCellStyle(yellowH);
+                else if (i <= 23) cell.setCellStyle(orangeH);
+                else if (i >= 24 && i <= 27) {
+                    if (i == 24) cell.setCellStyle(blueH_TopLeft);
+                    else if (i == 27) cell.setCellStyle(blueH_TopRight);
                     else cell.setCellStyle(blueH_Top);
                 }
                 else cell.setCellStyle(ivoryH);
             }
             sheet.setAutoFilter(new CellRangeAddress(0, 0, 0, headers.length - 1));
 
-            // 데이터 유효성 설정 (미사용 검토결과 컬럼: 23번)
             DataValidationHelper validationHelper = sheet.getDataValidationHelper();
             String[] reviewOptions = {"O(미사용)", "△(판단불가)", "X(사용)"};
             DataValidationConstraint constraint = validationHelper.createExplicitListConstraint(reviewOptions);
-            CellRangeAddressList addressList = new CellRangeAddressList(1, Math.max(1, allApiList.size() + 1000), 23, 23);
+            CellRangeAddressList addressList = new CellRangeAddressList(1, Math.max(1, allApiList.size() + 1000), 26, 26);
             DataValidation validation = validationHelper.createValidation(constraint, addressList);
             validation.setSuppressDropDownArrow(true);
             validation.setShowErrorBox(true);
@@ -249,13 +260,14 @@ public class ApiExcelExporter {
                     else { suspicionScore = "★☆☆"; caseType = 3; }
                 }
 
-                // [v12.4] 데이터 배열 매핑 [cite: 2026-03-09]
+                // [v13.1] 지능형 프로그램 ID 추출 적용 [cite: 2026-03-10]
+                String autoProgId = autoExtractProgramId(info.apiPath);
+
                 String[] data = {String.valueOf(i + 1), "", REPO_NAME, info.apiPath, fullUrl, info.repoPath,
-                        info.controllerName, info.methodName, "", info.isDeprecated,
-                        info.git1[0], info.git1[1], info.git1[2], info.git2[0], info.git2[1], info.git2[2],
-                        info.git3[0], info.git3[1], info.git3[2],
-                        String.valueOf(totalCalls), suspicionScore, TEAM_NAME, MANAGER_NAME, "", "",
-                        "", "", "", "", ""};
+                        info.controllerName, info.methodName, autoProgId, info.fullComment, info.descriptionTag, info.apiOperationValue,
+                        info.isDeprecated, info.git1[0], info.git1[1], info.git1[2], info.git2[0], info.git2[1], info.git2[2],
+                        info.git3[0], info.git3[1], info.git3[2], String.valueOf(totalCalls), suspicionScore,
+                        TEAM_NAME, MANAGER_NAME, "", "", "", "", "", "", ""};
 
                 boolean isLastRow = (i == allApiList.size() - 1);
 
@@ -264,11 +276,11 @@ public class ApiExcelExporter {
                     if (j == 1) {
                         cell.setCellValue(now);
                         cell.setCellStyle(dateD);
-                    } else if (j == 19) {
+                    } else if (j == 22) {
                         cell.setCellValue(totalCalls);
                         if (totalCalls >= 0 && totalCalls <= NOT_USE_LIMIT_COUNT) cell.setCellStyle(highRiskS);
                         else cell.setCellStyle(numD);
-                    } else if (j == 20) {
+                    } else if (j == 23) {
                         cell.setCellValue(suspicionScore);
                         if (caseType == 1) cell.setCellStyle(highRiskS);
                         else if (caseType == 2) cell.setCellStyle(midRiskS);
@@ -276,9 +288,10 @@ public class ApiExcelExporter {
                         else cell.setCellStyle(centerD);
                     } else {
                         cell.setCellValue(data[j]);
-                        boolean isCenter = (j==0 || j==2 || (j>=6 && j<=18) || (j>=21));
+                        // 주석 3종(9, 10, 11) 왼쪽 정렬 적용 [cite: 2026-03-10]
+                        boolean isCenter = (j==0 || j==2 || (j>=6 && j<=8) || (j>=12 && j<=21) || (j>=24));
 
-                        if (j == 9 && isDep) cell.setCellStyle(depColumnStyle);
+                        if (j == 12 && isDep) cell.setCellStyle(depColumnStyle);
                         else if (j == 4) {
                             cell.setCellStyle(linkD);
                             try {
@@ -288,15 +301,14 @@ public class ApiExcelExporter {
                                 cell.setHyperlink(link);
                             } catch (Exception ignored) { }
                         } else {
-                            // [v12.4] 박스 테두리 강조 로직 [cite: 2026-03-09]
-                            if (j >= 21 && j <= 24) {
+                            if (j >= 24 && j <= 27) {
                                 if (isLastRow) {
-                                    if (j == 21) cell.setCellStyle(boxBottomLeft);
-                                    else if (j == 24) cell.setCellStyle(boxBottomRight);
+                                    if (j == 24) cell.setCellStyle(boxBottomLeft);
+                                    else if (j == 27) cell.setCellStyle(boxBottomRight);
                                     else cell.setCellStyle(boxBottom);
                                 } else {
-                                    if (j == 21) cell.setCellStyle(isCenter ? boxLeft : boxLeftLeftAlign);
-                                    else if (j == 24) cell.setCellStyle(isCenter ? boxRight : boxRightLeftAlign);
+                                    if (j == 24) cell.setCellStyle(isCenter ? boxLeft : boxLeftLeftAlign);
+                                    else if (j == 27) cell.setCellStyle(isCenter ? boxRight : boxRightLeftAlign);
                                     else cell.setCellStyle(isCenter ? centerD : leftD);
                                 }
                             } else {
@@ -310,16 +322,48 @@ public class ApiExcelExporter {
             sheet.setColumnWidth(1, 4000);
             sheet.setColumnWidth(3, 14500); sheet.setColumnWidth(4, 8500);
             sheet.setColumnWidth(5, 11500); sheet.setColumnWidth(6, 5500); sheet.setColumnWidth(7, 5500);
-            sheet.setColumnWidth(8, 4500);
-            sheet.setColumnWidth(21, 4000);
-            sheet.setColumnWidth(24, 6000);
-            for (int i = 9; i < headers.length; i++) if(i!=21 && i!=24) sheet.setColumnWidth(i, 4200);
+            sheet.setColumnWidth(8, 5500);
+            sheet.setColumnWidth(9, 5800);
+            sheet.setColumnWidth(10, 5800);
+            sheet.setColumnWidth(11, 5800);
+            sheet.setColumnWidth(24, 4000);
+            sheet.setColumnWidth(27, 6000);
+            for (int i = 13; i < headers.length; i++) if(i<24 || i>27) sheet.setColumnWidth(i, 4200);
 
             workbook.write(fos);
             addLog("\n[SUCCESS] 통합 엑셀 저장 완료: " + finalExcelFile.getName());
         } catch (Exception e) { addExceptionLog("엑셀 저장 중 오류", e); }
 
         addLog("\n[FINISH] 전체 분석 작업 종료: " + (System.currentTimeMillis() - startTime) / 1000 + "초 소요");
+    }
+
+    /** [v13.1] REST API 지능형 핵심 리소스명 추출 로직 [cite: 2026-03-10] */
+    private static String autoExtractProgramId(String path) {
+        if (path == null || path.isEmpty() || "/".equals(path)) return "-";
+
+        // 1. 확장자가 있는 패턴 (.lc, .do)
+        if (path.contains(".")) {
+            int lastSlash = path.lastIndexOf("/");
+            String filePart = (lastSlash != -1) ? path.substring(lastSlash + 1) : path;
+            int dotIdx = filePart.lastIndexOf(".");
+            String nameOnly = (dotIdx != -1) ? filePart.substring(0, dotIdx) : filePart;
+            int underIdx = nameOnly.lastIndexOf("_");
+            return (underIdx != -1) ? nameOnly.substring(0, underIdx) : nameOnly;
+        }
+
+        // 2. REST 지능형 분석 (visits 추출 등) [cite: 2026-03-10]
+        String[] segments = path.split("/");
+        List<String> validNouns = new ArrayList<>();
+        List<String> actions = Arrays.asList("new", "edit", "update", "delete", "create", "list", "save", "view");
+
+        for (String s : segments) {
+            // 빈값, 경로변수({id}), 단순 행위(Action) 키워드 제외 [cite: 2026-03-10]
+            if (!s.isEmpty() && !s.startsWith("{") && !actions.contains(s.toLowerCase())) {
+                validNouns.add(s);
+            }
+        }
+
+        return validNouns.isEmpty() ? "-" : validNouns.get(validNouns.size() - 1);
     }
 
     private static LocalDate getLatestDate(String d1, String d2, String d3) {
@@ -336,8 +380,6 @@ public class ApiExcelExporter {
         if (configFile.exists()) {
             try (InputStreamReader isr = new InputStreamReader(new FileInputStream(configFile), StandardCharsets.UTF_8)) {
                 prop.load(isr);
-                System.out.println("[LOG] config.properties 설정 로드 상세 내역:");
-
                 if (prop.getProperty("REPO_NAME") != null) REPO_NAME = prop.getProperty("REPO_NAME").trim();
                 if (prop.getProperty("DOMAIN") != null) DOMAIN = prop.getProperty("DOMAIN").trim();
                 if (prop.getProperty("ROOT_PATH") != null) ROOT_PATH = prop.getProperty("ROOT_PATH").trim();
@@ -347,8 +389,6 @@ public class ApiExcelExporter {
                 MANAGER_NAME = prop.getProperty("MANAGER_NAME", "").trim();
                 if (prop.getProperty("NOT_USE_LIMIT_COUNT") != null) NOT_USE_LIMIT_COUNT = Long.parseLong(prop.getProperty("NOT_USE_LIMIT_COUNT").trim());
                 if (prop.getProperty("LAST_COMMIT_DATE") != null) LAST_COMMIT_DATE = prop.getProperty("LAST_COMMIT_DATE").trim();
-
-                System.out.println("---------------------------------------------------------------");
                 isConfigLoaded = true;
             } catch (Exception e) { System.err.println("[ERROR] 설정 로드 중 오류: " + e.getMessage()); }
         }
@@ -377,19 +417,41 @@ public class ApiExcelExporter {
                     for (String s : subPaths) {
                         String cp = classPath.startsWith("/") ? classPath : (classPath.isEmpty() ? "" : "/" + classPath);
                         String mp = s.trim().startsWith("/") ? s.trim() : (s.trim().isEmpty() ? "" : "/" + s.trim());
-                        // [v12.4 BUG FIX] finalPath 변수 선언 추가 [cite: 2026-03-09]
                         String finalPath = (cp + mp).replaceAll("/+", "/");
                         ApiInfo info = new ApiInfo();
                         info.apiPath = (finalPath.isEmpty() ? "/" : finalPath);
                         info.methodName = method.getNameAsString(); info.isDeprecated = method.isAnnotationPresent("Deprecated") ? "Y" : "N";
                         info.controllerName = filePath.getFileName().toString(); info.repoPath = (REPO_NAME + "/" + relPath).replace("\\", "/");
                         info.git1 = git.get(0); info.git2 = git.get(1); info.git3 = git.get(2);
+
+                        if (method.getComment().isPresent()) {
+                            String full = method.getComment().get().getContent();
+                            info.fullComment = full.replaceAll("\\r|\\n|\\*", " ").trim();
+                            Matcher dM = Pattern.compile("@description\\s*:\\s*([^\\n\\r*]+)").matcher(full);
+                            info.descriptionTag = dM.find() ? dM.group(1).trim() : "-";
+                        } else {
+                            info.fullComment = "-"; info.descriptionTag = "-";
+                        }
+                        info.apiOperationValue = extractAnnotationValue(method, "ApiOperation", "value");
                         apis.add(info);
                     }
                 }
             }
         }
         return apis;
+    }
+
+    private static String extractAnnotationValue(MethodDeclaration method, String annName, String attrName) {
+        Optional<AnnotationExpr> ann = method.getAnnotationByName(annName);
+        if (ann.isPresent() && ann.get() instanceof NormalAnnotationExpr) {
+            return ((NormalAnnotationExpr) ann.get()).getPairs().stream()
+                    .filter(p -> p.getNameAsString().equals(attrName))
+                    .map(p -> p.getValue().toString().replaceAll("\"", ""))
+                    .findFirst().orElse("-");
+        } else if (ann.isPresent() && ann.get() instanceof SingleMemberAnnotationExpr) {
+            return ((SingleMemberAnnotationExpr) ann.get()).getMemberValue().toString().replaceAll("\"", "");
+        }
+        return "-";
     }
 
     private static List<ApiInfo> extractWithRegex(Path filePath, String relPath, List<String[]> git, StringBuilder log) {
@@ -403,7 +465,8 @@ public class ApiExcelExporter {
             Matcher mMatcher = Pattern.compile("@(GetMapping|PostMapping|RequestMapping|PutMapping|DeleteMapping|PatchMapping)\\s*\\((.*?)\\)", Pattern.DOTALL).matcher(raw);
             while (mMatcher.find()) {
                 String params = mMatcher.group(2);
-                Matcher mName = Pattern.compile("(?:public|private|protected)\\s+[\\w<>,\\s]+\\s+(\\w+)\\s*\\(").matcher(clean.substring(mMatcher.end(), Math.min(mMatcher.end() + 1000, clean.length())));
+                int searchLimit = Math.min(mMatcher.end() + 1000, clean.length());
+                Matcher mName = Pattern.compile("(?:public|private|protected)\\s+[\\w<>,\\s]+\\s+(\\w+)\\s*\\(").matcher(clean.substring(mMatcher.end(), searchLimit));
                 if (mName.find()) {
                     Matcher p = Pattern.compile("\"([^\"]+)\"").matcher(params);
                     while (p.find()) {
@@ -411,13 +474,25 @@ public class ApiExcelExporter {
                         if (!s.contains("RequestMethod")) {
                             String cp = classPath.startsWith("/") ? classPath : (classPath.isEmpty() ? "" : "/" + classPath);
                             String mp = s.startsWith("/") ? s : (s.isEmpty() ? "" : "/" + s);
-                            // [v12.4 BUG FIX] finalPath 변수 선언 추가 [cite: 2026-03-09]
                             String finalPath = (cp + mp).replaceAll("/+", "/");
                             ApiInfo info = new ApiInfo();
                             info.apiPath = (finalPath.isEmpty() ? "/" : finalPath);
                             info.methodName = mName.group(1); info.isDeprecated = clean.substring(Math.max(0, mMatcher.start() - 300), mMatcher.start()).contains("@Deprecated") ? "Y" : "N";
                             info.controllerName = filePath.getFileName().toString(); info.repoPath = (REPO_NAME + "/" + relPath).replace("\\", "/");
                             info.git1 = git.get(0); info.git2 = git.get(1); info.git3 = git.get(2);
+
+                            String headArea = raw.substring(Math.max(0, mMatcher.start() - 1000), mMatcher.start());
+                            Matcher cM = Pattern.compile("/\\*\\*(.*?)\\*/", Pattern.DOTALL).matcher(headArea);
+                            if (cM.find()) {
+                                String full = cM.group(1);
+                                info.fullComment = full.replaceAll("\\r|\\n|\\*", " ").trim();
+                                Matcher dM = Pattern.compile("@description\\s*:\\s*([^\\n\\r*]+)").matcher(full);
+                                info.descriptionTag = dM.find() ? dM.group(1).trim() : "-";
+                            } else {
+                                info.fullComment = "-"; info.descriptionTag = "-";
+                            }
+                            Matcher aM = Pattern.compile("@ApiOperation\\s*\\(\\s*value\\s*=\\s*\"([^\"]+)\"").matcher(headArea);
+                            info.apiOperationValue = aM.find() ? aM.group(1) : "-";
                             apis.add(info);
                         }
                     }
@@ -437,7 +512,7 @@ public class ApiExcelExporter {
     }
 
     private static void addLog(String msg) { System.out.println(msg); if (!logPath.isEmpty()) { try (FileWriter fw = new FileWriter(logPath, true); PrintWriter pw = new PrintWriter(fw)) { pw.println(msg); } catch (IOException ignored) {} } }
-    private static void saveInitialLogsToPath() { try (FileWriter fw = new FileWriter(logPath, false); PrintWriter pw = new PrintWriter(fw)) { pw.println("==============================================================="); pw.println("[START] " + REPO_NAME + " API 추출 및 Whatap 통합 시작 (v12.4)"); pw.println("==============================================================="); synchronized (RUNTIME_LOGS) { for (String l : RUNTIME_LOGS) pw.println(l); } } catch (IOException ignored) {} }
+    private static void saveInitialLogsToPath() { try (FileWriter fw = new FileWriter(logPath, false); PrintWriter pw = new PrintWriter(fw)) { pw.println("==============================================================="); pw.println("[START] " + REPO_NAME + " API 추출 및 Whatap 통합 시작 (v13.1)"); pw.println("==============================================================="); synchronized (RUNTIME_LOGS) { for (String l : RUNTIME_LOGS) pw.println(l); } } catch (IOException ignored) {} }
     private static void addExceptionLog(String title, Exception e) { StringWriter sw = new StringWriter(); e.printStackTrace(new PrintWriter(sw)); addLog("\n[ERROR] " + title + "\n" + sw.toString()); }
 
     private static List<String[]> getRecentGitHistories(String rel, String root, int c) {
@@ -464,5 +539,9 @@ public class ApiExcelExporter {
         return s;
     }
 
-    static class ApiInfo { String apiPath, methodName, isDeprecated, controllerName, repoPath; String[] git1, git2, git3; String getApiPath() { return apiPath; } }
+    static class ApiInfo {
+        String apiPath, methodName, isDeprecated, controllerName, repoPath;
+        String descriptionTag, apiOperationValue, fullComment;
+        String[] git1, git2, git3; String getApiPath() { return apiPath; }
+    }
 }

@@ -12,11 +12,11 @@ import java.util.*;
 
 /**
  * 프로젝트명: MenuExcelExporter
- * Version: 1.3 (URL 컬럼 위치 조정 및 파일명 패턴 통일)
+ * Version: 1.4 (프로그램 ID 자동 추출 로직 통합)
  * 반영사항:
- * 1. [레이아웃] 'locaMenUrl'(URL) 컬럼을 순번 다음인 2번째로 이동
- * 2. [파일명] ApiExcelExporter와 동일한 패턴 적용: '메뉴목록_(yyyy-MM-dd_추출).xlsx' [cite: 2026-03-06]
- * 3. [기능 유지] 신규 LOCAmenu_new.json 규격 및 필수 5개 항목 추출 로직 유지 [cite: 2026-03-09]
+ * 1. [자동화] ApiExcelExporter v13.1의 지능형 프로그램 ID 추출 로직 동일 적용 [cite: 2026-03-10]
+ * 2. [레이아웃] '프로그램ID(자동추출)' 컬럼을 연결 URL 바로 옆(3번째)으로 배치 [cite: 2026-03-10]
+ * 3. [기능 유지] 하위 sub 배열을 끝까지 추적하는 재귀 탐색 알고리즘 유지 [cite: 2026-03-09]
  * 4. [에러 수정] JSON 내 비표준 주석 처리 가능하도록 ALLOW_COMMENTS 유지 [cite: 2026-03-09]
  * 5. [환경] config.properties UTF-8 로드 및 상세 로그 시스템 유지 [cite: 2026-03-09]
  */
@@ -37,11 +37,10 @@ public class MenuExcelExporter {
         }
 
         long startTime = System.currentTimeMillis();
-        // [v1.3] ApiExcelExporter와 동일한 날짜 형식 적용 [cite: 2026-03-06]
         String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd'_추출'"));
 
         System.out.println("===============================================================");
-        System.out.println("[START] 메뉴 JSON 링크 추출 시작 (v1.3)");
+        System.out.println("[START] 메뉴 JSON 링크 및 프로그램 ID 추출 시작 (v1.4)");
         System.out.println("[INFO] 대상 파일: " + MENU_JSON_PATH);
         System.out.println("===============================================================");
 
@@ -94,8 +93,12 @@ public class MenuExcelExporter {
             info.locaMenCNm = item.path("locaMenCNm").asText("-");
             info.locaMenSeaInfCn = item.path("locaMenSeaInfCn").asText("-");
             info.locaMenUrl = url;
+
+            // [v1.4] URL 경로 분석을 통한 프로그램 ID 자동 생성 [cite: 2026-03-10]
+            info.progId = autoExtractProgramId(url);
+
             list.add(info);
-            System.out.println("  > [수집] " + info.locaMenIdNm + " (" + info.locaMenUrl + ")");
+            System.out.println("  > [수집] " + info.locaMenIdNm + " (ID: " + info.progId + ")");
         }
 
         if (item.has("sub") && item.get("sub").isArray()) {
@@ -103,8 +106,35 @@ public class MenuExcelExporter {
         }
     }
 
+    /** [v1.4] ApiExcelExporter v13.1과 동일한 지능형 리소스명 추출 로직 [cite: 2026-03-10] */
+    private static String autoExtractProgramId(String path) {
+        if (path == null || path.isEmpty() || "/".equals(path)) return "-";
+
+        // 1. 확장자가 있는 패턴 (.lc, .do)
+        if (path.contains(".")) {
+            int lastSlash = path.lastIndexOf("/");
+            String filePart = (lastSlash != -1) ? path.substring(lastSlash + 1) : path;
+            int dotIdx = filePart.lastIndexOf(".");
+            String nameOnly = (dotIdx != -1) ? filePart.substring(0, dotIdx) : filePart;
+            int underIdx = nameOnly.lastIndexOf("_");
+            return (underIdx != -1) ? nameOnly.substring(0, underIdx) : nameOnly;
+        }
+
+        // 2. REST 지능형 분석 (가변인자 및 액션 제외) [cite: 2026-03-10]
+        String[] segments = path.split("/");
+        List<String> validNouns = new ArrayList<>();
+        List<String> actions = Arrays.asList("new", "edit", "update", "delete", "create", "list", "save", "view");
+
+        for (String s : segments) {
+            if (!s.isEmpty() && !s.startsWith("{") && !actions.contains(s.toLowerCase())) {
+                validNouns.add(s);
+            }
+        }
+
+        return validNouns.isEmpty() ? "-" : validNouns.get(validNouns.size() - 1);
+    }
+
     private static void saveToExcel(List<MenuInfo> list, String ts) {
-        // [v1.3] 파일명 패턴을 ApiExcelExporter와 동일하게 수정 [cite: 2026-03-06]
         String fileName = "메뉴목록_(" + ts + ").xlsx";
         File outFile = new File(MENU_OUTPUT_DIR, fileName);
 
@@ -122,8 +152,8 @@ public class MenuExcelExporter {
             headerStyle.setBorderBottom(BorderStyle.THIN);
             Font font = wb.createFont(); font.setBold(true); headerStyle.setFont(font);
 
-            // [v1.3] URL 컬럼을 2번째(인덱스 1)로 이동
-            String[] headers = {"순번", "연결URL(locaMenUrl)", "메뉴ID(locaMenId)", "메뉴구분(locaMenC)", "메뉴명(locaMenIdNm)", "구분명(locaMenCNm)", "검색정보(locaMenSeaInfCn)"};
+            // [v1.4] 프로그램ID 컬럼을 URL 바로 옆(인덱스 2)으로 배치 [cite: 2026-03-10]
+            String[] headers = {"순번", "연결URL(locaMenUrl)", "프로그램ID(자동추출)", "메뉴ID(locaMenId)", "메뉴구분(locaMenC)", "메뉴명(locaMenIdNm)", "구분명(locaMenCNm)", "검색정보(locaMenSeaInfCn)"};
             Row headerRow = sheet.createRow(0);
             for (int i = 0; i < headers.length; i++) {
                 Cell c = headerRow.createCell(i);
@@ -135,17 +165,19 @@ public class MenuExcelExporter {
             for (MenuInfo m : list) {
                 Row r = sheet.createRow(rowIdx++);
                 r.createCell(0).setCellValue(rowIdx - 1);
-                r.createCell(1).setCellValue(m.locaMenUrl); // URL 위치 변경 [cite: 2026-03-09]
-                r.createCell(2).setCellValue(m.locaMenId);
-                r.createCell(3).setCellValue(m.locaMenC);
-                r.createCell(4).setCellValue(m.locaMenIdNm);
-                r.createCell(5).setCellValue(m.locaMenCNm);
-                r.createCell(6).setCellValue(m.locaMenSeaInfCn);
+                r.createCell(1).setCellValue(m.locaMenUrl);
+                r.createCell(2).setCellValue(m.progId); // 프로그램 ID 삽입 [cite: 2026-03-10]
+                r.createCell(3).setCellValue(m.locaMenId);
+                r.createCell(4).setCellValue(m.locaMenC);
+                r.createCell(5).setCellValue(m.locaMenIdNm);
+                r.createCell(6).setCellValue(m.locaMenCNm);
+                r.createCell(7).setCellValue(m.locaMenSeaInfCn);
             }
 
             for (int i = 0; i < headers.length; i++) {
-                if (i == 1) sheet.setColumnWidth(i, 15000); // URL 너비 확장
-                else if (i == 6) sheet.setColumnWidth(i, 12000);
+                if (i == 1) sheet.setColumnWidth(i, 15000);
+                else if (i == 2) sheet.setColumnWidth(i, 6000); // 프로그램 ID 너비
+                else if (i == 7) sheet.setColumnWidth(i, 12000);
                 else sheet.setColumnWidth(i, 6000);
             }
 
@@ -169,6 +201,6 @@ public class MenuExcelExporter {
     }
 
     static class MenuInfo {
-        String locaMenId, locaMenC, locaMenIdNm, locaMenCNm, locaMenSeaInfCn, locaMenUrl;
+        String locaMenId, locaMenC, locaMenIdNm, locaMenCNm, locaMenSeaInfCn, locaMenUrl, progId;
     }
 }
