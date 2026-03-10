@@ -12,12 +12,13 @@ import java.util.*;
 
 /**
  * 프로젝트명: MenuExcelExporter
- * Version: 1.1 (JSON 주석 허용 설정 반영)
+ * Version: 1.2 (컬럼 순서 변경: URL을 맨 앞으로 배치)
  * 반영사항:
- * 1. [에러 수정] menu.json 내 비표준 주석 처리 가능하도록 ALLOW_COMMENTS 옵션 활성화
- * 2. [기능 유지] JSON 내 'link'가 있는 항목을 재귀적으로 탐색하여 추출 [cite: 2026-03-09]
-        * 3. [데이터] menNm, note, link 정보를 엑셀로 변환 [cite: 2026-03-09]
-        * 4. [복구] config.properties UTF-8 로드 및 상세 로그 시스템 적용 [cite: 2026-03-09]
+ * 1. [레이아웃] '연결 URL(link)' 컬럼을 0번 인덱스(맨 앞)로 이동하여 매핑 편의성 강화 [cite: 2026-03-09]
+ * 2. [에러 수정] menu.json 내 비표준 주석 처리 가능하도록 ALLOW_COMMENTS 옵션 유지
+ * 3. [기능 유지] JSON 내 'link'가 있는 항목을 재귀적으로 탐색하여 추출 [cite: 2026-03-09]
+        * 4. [데이터] menNm, note, link 정보를 엑셀로 변환 [cite: 2026-03-09]
+        * 5. [복구] config.properties UTF-8 로드 및 상세 로그 시스템 적용 [cite: 2026-03-09]
         */
 public class MenuExcelExporter {
 
@@ -40,9 +41,9 @@ public class MenuExcelExporter {
         String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd'_추출'"));
 
         System.out.println("===============================================================");
-        System.out.println("[START] 메뉴 JSON 링크 추출 시작 (v1.1)");
+        System.out.println("[START] 메뉴 JSON 링크 추출 시작 (v1.2)");
         System.out.println("[INFO] 대상 파일: " + MENU_JSON_PATH);
-        System.out.println("[INFO] JSON 주석 허용 모드 활성화됨.");
+        System.out.println("[INFO] 컬럼 순서: URL | 순번 | 메뉴명 | 비고");
         System.out.println("===============================================================");
 
         try {
@@ -109,7 +110,7 @@ public class MenuExcelExporter {
 
             Sheet sheet = wb.createSheet("Menu_Link_Mapping");
 
-            // 헤더 스타일 (Blue 테마 적용)
+            // 헤더 스타일 (Blue 테마 적용) [cite: 2026-03-09]
             CellStyle headerStyle = wb.createCellStyle();
             headerStyle.setFillForegroundColor(IndexedColors.LIGHT_CORNFLOWER_BLUE.getIndex());
             headerStyle.setFillPattern(FillPatternType.SOLID_FOREGROUND);
@@ -117,7 +118,8 @@ public class MenuExcelExporter {
             headerStyle.setBorderBottom(BorderStyle.THIN);
             Font font = wb.createFont(); font.setBold(true); headerStyle.setFont(font);
 
-            String[] headers = {"순번", "메뉴명(menNm)", "비고(note)", "연결 URL(link)"};
+            // [v1.2] URL을 맨 앞으로 이동 [cite: 2026-03-09]
+            String[] headers = {"연결 URL(link)", "순번", "메뉴명(menNm)", "비고(note)"};
             Row headerRow = sheet.createRow(0);
             for (int i = 0; i < headers.length; i++) {
                 Cell c = headerRow.createCell(i);
@@ -128,15 +130,18 @@ public class MenuExcelExporter {
             int rowIdx = 1;
             for (MenuInfo m : list) {
                 Row r = sheet.createRow(rowIdx++);
-                r.createCell(0).setCellValue(rowIdx - 1);
-                r.createCell(1).setCellValue(m.menNm);
-                r.createCell(2).setCellValue(m.note);
-                r.createCell(3).setCellValue(m.link);
+                // [v1.2] 데이터 매핑 순서 변경 [cite: 2026-03-09]
+                r.createCell(0).setCellValue(m.link);    // 0: URL
+                r.createCell(1).setCellValue(rowIdx - 1); // 1: 순번
+                r.createCell(2).setCellValue(m.menNm);   // 2: 메뉴명
+                r.createCell(3).setCellValue(m.note);    // 3: 비고
             }
 
-            sheet.setColumnWidth(1, 8000);
-            sheet.setColumnWidth(2, 10000);
-            sheet.setColumnWidth(3, 15000);
+            // [v1.2] 너비 설정 재조정 [cite: 2026-03-09]
+            sheet.setColumnWidth(0, 15000); // URL
+            sheet.setColumnWidth(1, 3000);  // 순번
+            sheet.setColumnWidth(2, 8000);  // 메뉴명
+            sheet.setColumnWidth(3, 10000); // 비고
 
             wb.write(fos);
             System.out.println("\n[SUCCESS] 엑셀 저장 완료: " + outFile.getAbsolutePath());
