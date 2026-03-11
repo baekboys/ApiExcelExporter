@@ -24,13 +24,13 @@ import java.util.stream.Collectors;
 
 /**
  * 프로젝트명: ApiExcelExporter (Bitbucket 관리형)
- * Version: 13.9 (deprecation 오타 대응 및 주석 완벽 보존)
+ * Version: 13.10 (대량 데이터 서식 범위 확장 및 deprecation 오타 대응)
  * 반영사항:
- * 1. [로직 강화] 주석 내 'deprecation' 키워드를 'description' 오타로 판단하여 동일하게 추출 [cite: 2026-03-11]
- * 2. [기능 유지] 관련메뉴 판단 우선순위: ApiOperation > description(deprecation) > 메소드주석 > 메소드Req > 컨트롤러Req > 컨트롤러주석 [cite: 2026-03-11]
- * 3. [가독성 개선] 메소드 주석 내 <h3> 태그 제거 로직 및 @RequestProperty(R대문자) 추출 유지 [cite: 2026-03-11]
- * 4. [주석 유지] 시스템 설정, 분석 엔진, 상세 로직 주석 전수 복구 및 보존 [cite: 2026-02-05]
- * 5. [성능] i9-13900 환경 최적화 parallelStream 분석 및 상세 로그(Found) 보존 [cite: 2026-02-23, 2026-03-10]
+ * 1. [범위 확장] 조건부 서식 적용 범위를 동적(Z2:Z[N], AA2:AA[N])으로 수정하여 4,000건 이상 데이터 대응
+ * 2. [로직 강화] 주석 내 'deprecation' 키워드를 'description' 오타로 판단하여 업무 명칭 추출 로직에 통합
+ * 3. [기능 유지] 관련메뉴 판단 우선순위: ApiOperation > description(deprecation) > 메소드주석 > 메소드Req > 컨트롤러Req > 컨트롤러주석
+ * 4. [주석 유지] 시스템 설정, 분석 엔진, 상세 로직 주석 전수 복구 및 보존
+ * 5. [성능] i9-13900 환경 최적화 parallelStream 분석 및 상세 로그(Found) 보존
  */
 public class ApiExcelExporter {
 
@@ -65,7 +65,7 @@ public class ApiExcelExporter {
     /** [v11.3 신규] 미사용 의심 판별 기준일 (YYYY-MM-DD) */
     private static String LAST_COMMIT_DATE = "1900-01-01";
 
-    /** [v13.6 신규] Whatap 연동 여부 : N일 경우 호출건수 등을 표시하지 않음 [cite: 2026-03-11] */
+    /** [v13.6 신규] Whatap 연동 여부 : N일 경우 호출건수 등을 표시하지 않음 */
     private static String WHATAP_ENABLED = "Y";
 
     /** 설정 파일 로드 성공 여부 플래그 */
@@ -107,7 +107,7 @@ public class ApiExcelExporter {
 
         // 2. 실행 정보 상세 기록 시작
         System.out.println("===============================================================");
-        System.out.println("[START] " + REPO_NAME + " API 추출 및 Whatap 통합 시작 (v13.9)");
+        System.out.println("[START] " + REPO_NAME + " API 추출 및 Whatap 통합 시작 (v13.10)");
         System.out.println("[INFO] 관리 정보: 팀[" + TEAM_NAME + "] / 담당자[" + MANAGER_NAME + "]");
         System.out.println("===============================================================");
 
@@ -128,17 +128,19 @@ public class ApiExcelExporter {
             totalFiles = controllerFiles.size();
             final int total = totalFiles;
 
-            // i9-13900 병렬 분석 최적화 [cite: 2026-02-23]
+            // i9-13900 병렬 분석 최적화
             controllerFiles.parallelStream().forEach(file -> {
                 String relativePath = rootPathObj.relativize(file).toString();
                 int current = PROCESSED_COUNT.incrementAndGet();
 
+                // Git 이력 추출 (최근 3건)
                 List<String[]> gitHistories = getRecentGitHistories(relativePath, ROOT_PATH, 3);
 
                 StringBuilder fileLog = new StringBuilder();
                 fileLog.append(String.format("\n[%d/%d] 분석: %s", current, total, file.getFileName()));
                 fileLog.append(String.format(" (최신커밋: %s | %s)", gitHistories.get(0)[0], gitHistories.get(0)[1]));
 
+                // 하이브리드 추출 엔진 가동
                 allApiList.addAll(extractApisHybrid(file, relativePath, gitHistories, fileLog));
 
                 System.out.print(fileLog.toString());
@@ -148,6 +150,7 @@ public class ApiExcelExporter {
 
         allApiList.sort(Comparator.comparing(ApiInfo::getApiPath));
 
+        // 4. 결과 파일 및 로그 저장
         String baseFileName = String.format("API목록_(%s)_(컨트롤러  %d개 & API %d개)_(%s)",
                 REPO_NAME, totalFiles, allApiList.size(), timestamp);
 
@@ -204,7 +207,7 @@ public class ApiExcelExporter {
 
             sheet.createFreezePane(4, 1);
 
-            // [v13.8] 헤더 구성 유지 [cite: 2026-03-11]
+            // [v13.8] 헤더 구성 유지
             String[] headers = {"순번","추출일자","레파지토리","API 경로","전체 URL","repository path","컨트롤러명","호출메소드",
                     "프로그램ID(자동추출)","ApiOperation(참고용)","description주석(참고용)","메소드주석(참고용)",
                     "RequestProperty(참고용)","컨트롤러RequestProperty(참고용)","컨트롤러주석(참고용)","Deprecated",
@@ -230,30 +233,36 @@ public class ApiExcelExporter {
             }
             sheet.setAutoFilter(new CellRangeAddress(0, 0, 0, headers.length - 1));
 
-            // 데이터 유효성 설정
+            // 데이터 유효성 설정 (동적 범위 적용)
             DataValidationHelper validationHelper = sheet.getDataValidationHelper();
+            int maxRowIndex = Math.max(5000, allApiList.size() + 1000); // 4000건 초과 대응
+
             String[] suspicionOptions = {"★☆☆", "★★☆", "★★★"};
             DataValidationConstraint suspicionConstraint = validationHelper.createExplicitListConstraint(suspicionOptions);
-            CellRangeAddressList suspicionAddressList = new CellRangeAddressList(1, Math.max(1, allApiList.size() + 1000), 26, 26);
+            CellRangeAddressList suspicionAddressList = new CellRangeAddressList(1, maxRowIndex, 26, 26);
             DataValidation suspicionValidation = validationHelper.createValidation(suspicionConstraint, suspicionAddressList);
             suspicionValidation.setSuppressDropDownArrow(true); suspicionValidation.setShowErrorBox(true); sheet.addValidationData(suspicionValidation);
 
             String[] reviewOptions = {"O(미사용)", "△(판단불가)", "X(사용)"};
             DataValidationConstraint constraint = validationHelper.createExplicitListConstraint(reviewOptions);
-            CellRangeAddressList addressList = new CellRangeAddressList(1, Math.max(1, allApiList.size() + 1000), 29, 29);
+            CellRangeAddressList addressList = new CellRangeAddressList(1, maxRowIndex, 29, 29);
             DataValidation validation = validationHelper.createValidation(constraint, addressList);
             validation.setSuppressDropDownArrow(true); validation.setShowErrorBox(true); sheet.addValidationData(validation);
 
-            // [v13.8] 엑셀 조건부 서식 설정
+            // [v13.10 BUG FIX] 조건부 서식 범위 동적 확장 (Z열, AA열)
             SheetConditionalFormatting sheetCF = sheet.getSheetConditionalFormatting();
-            CellRangeAddress[] callCountRange = { CellRangeAddress.valueOf("Z2:Z4001") };
+            String lastRowStr = String.valueOf(maxRowIndex + 1);
+
+            // 1. 호출건수 조건부 서식 (Z열, 25번)
+            CellRangeAddress[] callCountRange = { CellRangeAddress.valueOf("Z2:Z" + lastRowStr) };
             String callCountFormula = String.format("AND(Z2<>\"\", Z2<=%d)", NOT_USE_LIMIT_COUNT);
             ConditionalFormattingRule callCountRule = sheetCF.createConditionalFormattingRule(callCountFormula);
             PatternFormatting callCountFill = callCountRule.createPatternFormatting();
             callCountFill.setFillBackgroundColor(IndexedColors.ROSE.getIndex()); callCountFill.setFillPattern(PatternFormatting.SOLID_FOREGROUND);
             sheetCF.addConditionalFormatting(callCountRange, callCountRule);
 
-            CellRangeAddress[] suspicionRange = { CellRangeAddress.valueOf("AA2:AA4001") };
+            // 2. 미사용 의심건 조건부 서식 (AA열, 26번)
+            CellRangeAddress[] suspicionRange = { CellRangeAddress.valueOf("AA2:AA" + lastRowStr) };
             ConditionalFormattingRule rule3 = sheetCF.createConditionalFormattingRule(ComparisonOperator.EQUAL, "\"★★★\"");
             PatternFormatting fill3 = rule3.createPatternFormatting(); fill3.setFillBackgroundColor(IndexedColors.ROSE.getIndex()); fill3.setFillPattern(PatternFormatting.SOLID_FOREGROUND);
             ConditionalFormattingRule rule2 = sheetCF.createConditionalFormattingRule(ComparisonOperator.EQUAL, "\"★★☆\"");
@@ -287,7 +296,7 @@ public class ApiExcelExporter {
 
                 String autoProgId = autoExtractProgramId(info.apiPath);
 
-                // [v13.9] 관련메뉴 자동 매핑 로직 (오타 deprecation 자동 감지 포함) [cite: 2026-03-11]
+                // [v13.10] 관련메뉴 자동 매핑 로직 (오타 deprecation 자동 감지 및 우선순위 강화)
                 String autoRelatedMenu = autoPopulateRelatedMenu(info);
 
                 boolean isWhatapOn = "Y".equalsIgnoreCase(WHATAP_ENABLED);
@@ -356,16 +365,14 @@ public class ApiExcelExporter {
         addLog("\n[FINISH] 전체 분석 작업 종료: " + (System.currentTimeMillis() - startTime) / 1000 + "초 소요");
     }
 
-    /** [v13.9] 관련메뉴 자동 매핑 로직 (명선님 요청 순서 및 오타 deprecation 대응) [cite: 2026-03-11]
+    /** [v13.10] 관련메뉴 자동 매핑 로직 (deprecation 오타 자동 대응 포함)
      * 우선순위: ApiOperation > description(deprecation) > 메소드주석 > RequestProperty(메소드) > RequestProperty(컨트롤러) > 컨트롤러주석 */
     private static String autoPopulateRelatedMenu(ApiInfo info) {
-        // 1. ApiOperation 우선순위
         if (info.apiOperationValue != null && !"-".equals(info.apiOperationValue) && !info.apiOperationValue.trim().isEmpty()) return info.apiOperationValue;
 
-        // 2. 메소드 description/deprecation 주석 우선순위 [cite: 2026-03-11]
+        // 2. description 또는 deprecation 오타 자동 감지 로직
         if (info.descriptionTag != null && !"-".equals(info.descriptionTag) && !info.descriptionTag.trim().isEmpty()) return info.descriptionTag;
 
-        // 3. 메소드 주석 (태그 제거 후 첫 문장) [cite: 2026-03-11]
         if (info.fullComment != null && !"-".equals(info.fullComment)) {
             String comment = info.fullComment.trim();
             if (!comment.isEmpty()) {
@@ -374,15 +381,11 @@ public class ApiExcelExporter {
             }
         }
 
-        // 4. 메소드 RequestProperty 우선순위 [cite: 2026-03-11]
         if (info.requestPropertyValue != null && !"-".equals(info.requestPropertyValue) && !info.requestPropertyValue.trim().isEmpty()) return info.requestPropertyValue;
-
-        // 5. 컨트롤러 RequestProperty 백업 [cite: 2026-03-11]
         if (info.controllerRequestPropertyValue != null && !"-".equals(info.controllerRequestPropertyValue) && !info.controllerRequestPropertyValue.trim().isEmpty()) return info.controllerRequestPropertyValue;
 
-        // 6. 컨트롤러(클래스) 상단 주석 백업 [cite: 2026-03-10]
         if (info.controllerComment != null && !"-".equals(info.controllerComment)) {
-            // [v13.9] 컨트롤러 주석 내 description/deprecation 추출 시도 [cite: 2026-03-11]
+            // [v13.10] 컨트롤러 주석 내 description/deprecation 추출 시도
             Matcher dM = Pattern.compile("@?(description|deprecation)[\\s:]*([^\\n\\r*]+)", Pattern.CASE_INSENSITIVE).matcher(info.controllerComment);
             if (dM.find()) return dM.group(2).trim();
             String cmt = info.controllerComment.trim();
@@ -467,7 +470,8 @@ public class ApiExcelExporter {
                     List<String> subPaths = getPathsFromAnn(methodAnn.get());
                     if (subPaths.isEmpty()) subPaths.add("");
                     for (String s : subPaths) {
-                        String finalPath = (classPath + (s.trim().startsWith("/") ? s.trim() : (s.trim().isEmpty() ? "" : "/" + s.trim()))).replaceAll("/+", "/");
+                        String mp = s.trim().startsWith("/") ? s.trim() : (s.trim().isEmpty() ? "" : "/" + s.trim());
+                        String finalPath = (classPath + mp).replaceAll("/+", "/");
                         ApiInfo info = new ApiInfo();
                         info.apiPath = (finalPath.isEmpty() ? "/" : finalPath);
                         info.methodName = method.getNameAsString(); info.isDeprecated = method.isAnnotationPresent("Deprecated") ? "Y" : "N";
@@ -477,7 +481,7 @@ public class ApiExcelExporter {
                         if (method.getComment().isPresent()) {
                             String full = method.getComment().get().getContent();
                             info.fullComment = full.replaceAll("\\r|\\n|\\*", " ").replaceAll("(?i)<h3>|</h3>", "").trim();
-                            // [v13.9] description 또는 deprecation 오타 자동 감지 [cite: 2026-03-11]
+                            // [v13.10] description 또는 deprecation 오타 자동 감지
                             Matcher dM = Pattern.compile("@?(description|deprecation)[\\s:]*([^\\n\\r*]+)", Pattern.CASE_INSENSITIVE).matcher(full);
                             info.descriptionTag = dM.find() ? dM.group(2).trim() : "-";
                         } else { info.fullComment = "-"; info.descriptionTag = "-"; }
@@ -554,7 +558,7 @@ public class ApiExcelExporter {
                             if (cM.find()) {
                                 String full = cM.group(1);
                                 info.fullComment = full.replaceAll("\\r|\\n|\\*", " ").replaceAll("(?i)<h3>|</h3>", "").trim();
-                                // [v13.9] Regex 분석 시에도 deprecation 오타 자동 감지 [cite: 2026-03-11]
+                                // [v13.10] Regex 분석 시에도 deprecation 오타 자동 감지
                                 Matcher dM = Pattern.compile("@?(description|deprecation)[\\s:]*([^\\n\\r*]+)", Pattern.CASE_INSENSITIVE).matcher(full);
                                 info.descriptionTag = dM.find() ? dM.group(2).trim() : "-";
                             } else { info.fullComment = "-"; info.descriptionTag = "-"; }
@@ -585,7 +589,7 @@ public class ApiExcelExporter {
     }
 
     private static void addLog(String msg) { System.out.println(msg); if (!logPath.isEmpty()) { try (FileWriter fw = new FileWriter(logPath, true); PrintWriter pw = new PrintWriter(fw)) { pw.println(msg); } catch (IOException ignored) {} } }
-    private static void saveInitialLogsToPath() { try (FileWriter fw = new FileWriter(logPath, false); PrintWriter pw = new PrintWriter(fw)) { pw.println("==============================================================="); pw.println("[START] " + REPO_NAME + " API 추출 및 Whatap 통합 시작 (v13.9)"); pw.println("==============================================================="); synchronized (RUNTIME_LOGS) { for (String l : RUNTIME_LOGS) pw.println(l); } } catch (IOException ignored) {} }
+    private static void saveInitialLogsToPath() { try (FileWriter fw = new FileWriter(logPath, false); PrintWriter pw = new PrintWriter(fw)) { pw.println("==============================================================="); pw.println("[START] " + REPO_NAME + " API 추출 및 Whatap 통합 시작 (v13.10)"); pw.println("==============================================================="); synchronized (RUNTIME_LOGS) { for (String l : RUNTIME_LOGS) pw.println(l); } } catch (IOException ignored) {} }
     private static void addExceptionLog(String title, Exception e) { StringWriter sw = new StringWriter(); e.printStackTrace(new PrintWriter(sw)); addLog("\n[ERROR] " + title + "\n" + sw.toString()); }
 
     private static List<String[]> getRecentGitHistories(String rel, String root, int c) {
