@@ -24,13 +24,14 @@ import java.util.stream.Collectors;
 
 /**
  * 프로젝트명: ApiExcelExporter (Bitbucket 관리형)
- * Version: 13.7 (requestProperty 연동 및 Yellow 영역 순서 재조정)
+ * Version: 13.8 (RequestProperty 통합 및 판단 로직 고도화)
  * 반영사항:
- * 1. [기능 추가] @requestProperty(title 우선, 없을 시 value) 추출 및 '관련메뉴' 유추 2순위 반영 [cite: 2026-03-11]
- * 2. [레이아웃] Yellow 영역 재배치: [ApiOperation] -> [requestProperty] -> [description] -> [메소드주석] -> [컨트롤러주석] [cite: 2026-03-11]
- * 3. [가독성 개선] '메소드주석(참고용)' 추출 시 <h3>, </h3> 태그 완전 제거 [cite: 2026-03-11]
- * 4. [버그 수정] 호출건수(Y열) 조건부 서식 시 빈 셀이 강조되지 않도록 수식(AND(Y2<>"", Y2<=Limit)) 적용 [cite: 2026-03-11]
- * 5. [성능/유지] i9-13900 병렬 분석, 상세 로그(Found), 소스 코드 내 모든 상세 주석 완벽 보존 [cite: 2026-02-05, 2026-02-23]
+ * 1. [기능 추가] @RequestProperty(R대문자) 추출 로직 적용 (title 우선, 없을 시 value) [cite: 2026-03-11]
+ * 2. [기능 추가] 컨트롤러 레벨 @RequestProperty 추출 및 '관련메뉴' 유추 로직 반영 [cite: 2026-03-11]
+ * 3. [레이아웃] Yellow 영역 재배치: [ApiOperation] -> [description] -> [메소드주석] -> [RequestProperty(메소드)] -> [RequestProperty(컨트롤러)] -> [컨트롤러주석] [cite: 2026-03-11]
+ * 4. [가독성 개선] '메소드주석(참고용)' 추출 시 <h3>, </h3> 태그 완전 제거 [cite: 2026-03-11]
+ * 5. [인덱스 조정] 호출건수(Z열, 25번) 및 미사용 의심건(AA열, 26번) 조건부 서식/유효성 검사 시프트 [cite: 2026-03-11]
+ * 6. [성능/유지] i9-13900 병렬 분석, 상세 로그(Found), 소스 코드 내 모든 상세 주석 완벽 보존 [cite: 2026-02-05, 2026-02-23]
  */
 public class ApiExcelExporter {
 
@@ -38,16 +39,16 @@ public class ApiExcelExporter {
     // [ 1. 내부 기본 설정부 ] - config.properties를 반드시 작성하세요.
     // ==========================================================================================
 
-    /** [핵심변수 1] 레파지토리 이름 : 파일명 생성 시 식별자로 활용 */
+    /** [핵심변수 1] 레파지토리 이름 : bitbucket명이 아닌 추출프로그램에서 파일명으로 쓰기 위함 */
     private static String REPO_NAME = "";
 
-    /** [핵심변수 2] 기본 도메인 주소 : 엑셀 내 전체 URL 하이퍼링크 생성용 */
+    /** [핵심변수 2] 기본 도메인 주소 : 추후 API테스트 시 편하게 하기 위함 */
     private static String DOMAIN = "";
 
-    /** [핵심변수 3] 분석할 Java 소스 로컬 절대 경로 */
+    /** [핵심변수 3] 분석할 Java 소스 로컬 절대 경로 : API추출을 위한 소스코드 위치 */
     private static String ROOT_PATH = "";
 
-    /** [핵심변수 4] 결과 저장 디렉토리 물리적 경로 */
+    /** [핵심변수 4] 결과 저장 디렉토리 물리적 경로 : Whatap 추출 결과 파일 위치도 동일함 */
     private static String OUTPUT_DIR = "";
 
     /** [핵심변수 5] Git 실행 경로 : 환경변수 미등록 PC 대응 */
@@ -107,7 +108,7 @@ public class ApiExcelExporter {
 
         // 2. 실행 정보 상세 기록 시작
         System.out.println("===============================================================");
-        System.out.println("[START] " + REPO_NAME + " API 추출 및 Whatap 통합 시작 (v13.7)");
+        System.out.println("[START] " + REPO_NAME + " API 추출 및 Whatap 통합 시작 (v13.8)");
         System.out.println("[INFO] 관리 정보: 팀[" + TEAM_NAME + "] / 담당자[" + MANAGER_NAME + "]");
         System.out.println("===============================================================");
 
@@ -128,7 +129,7 @@ public class ApiExcelExporter {
             totalFiles = controllerFiles.size();
             final int total = totalFiles;
 
-            // i9-13900 멀티코어 성능을 활용한 병렬 소스 분석 [cite: 2026-02-23]
+            // i9-13900 병렬 분석 최적화 [cite: 2026-02-23]
             controllerFiles.parallelStream().forEach(file -> {
                 String relativePath = rootPathObj.relativize(file).toString();
                 int current = PROCESSED_COUNT.incrementAndGet();
@@ -207,9 +208,10 @@ public class ApiExcelExporter {
 
             sheet.createFreezePane(4, 1);
 
-            // [v13.7] 헤더 구성 (Yellow 영역 순서 재조정 및 requestProperty 추가) [cite: 2026-03-11]
+            // [v13.8] 헤더 구성 (Yellow 영역 재배치 및 컨트롤러 RequestProperty 추가) [cite: 2026-03-11]
             String[] headers = {"순번","추출일자","레파지토리","API 경로","전체 URL","repository path","컨트롤러명","호출메소드",
-                    "프로그램ID(자동추출)","ApiOperation(참고용)","requestProperty(참고용)","description주석(참고용)","메소드주석(참고용)","컨트롤러주석(참고용)","Deprecated",
+                    "프로그램ID(자동추출)","ApiOperation(참고용)","description주석(참고용)","메소드주석(참고용)",
+                    "RequestProperty(참고용)","컨트롤러RequestProperty(참고용)","컨트롤러주석(참고용)","Deprecated",
                     "커밋일자1","커밋터1","코멘트1","커밋일자2","커밋터2","코멘트2","커밋일자3","커밋터3","코멘트3",
                     "호출건수(APM추출필요)","미사용 의심건","팀","담당자","미사용 검토결과","관련메뉴(미사용시)",
                     "조치예정일자","조치일자","관련티켓","조치담당자","비고"};
@@ -219,50 +221,49 @@ public class ApiExcelExporter {
                 Cell cell = headerRow.createCell(i);
                 cell.setCellValue(headers[i]);
                 if (i <= 4) cell.setCellStyle(greyH);
-                else if (i <= 13) cell.setCellStyle(yellowH); // 주석 5종 영역 [cite: 2026-03-11]
-                else if (i <= 25) cell.setCellStyle(orangeH);
-                else if (i >= 26 && i <= 29) { // [v13.7] 검토 구역 강조 박스 (26~29번)
+                else if (i <= 14) cell.setCellStyle(yellowH); // 주석/RequestProperty 6종 영역 [cite: 2026-03-11]
+                else if (i <= 26) cell.setCellStyle(orangeH);
+                else if (i >= 27 && i <= 30) { // [v13.8] 검토 구역 강조 박스 (27~30번) [cite: 2026-03-11]
                     CellStyle style = createStyle(workbook, IndexedColors.LIGHT_CORNFLOWER_BLUE.getIndex(), true, true);
                     style.setBorderTop(BorderStyle.THICK);
-                    if (i == 26) style.setBorderLeft(BorderStyle.THICK);
-                    if (i == 29) style.setBorderRight(BorderStyle.THICK);
+                    if (i == 27) style.setBorderLeft(BorderStyle.THICK);
+                    if (i == 30) style.setBorderRight(BorderStyle.THICK);
                     cell.setCellStyle(style);
                 }
                 else cell.setCellStyle(ivoryH);
             }
             sheet.setAutoFilter(new CellRangeAddress(0, 0, 0, headers.length - 1));
 
-            // [v13.7] 데이터 유효성 설정 (인덱스 시프트 반영) [cite: 2026-03-11]
+            // [v13.8] 데이터 유효성 설정 (인덱스 시프트 반영) [cite: 2026-03-11]
             DataValidationHelper validationHelper = sheet.getDataValidationHelper();
 
-            // 1. 미사용 의심건 드롭다운 (25번)
+            // 1. 미사용 의심건 드롭다운 (26번, AA열)
             String[] suspicionOptions = {"★☆☆", "★★☆", "★★★"};
             DataValidationConstraint suspicionConstraint = validationHelper.createExplicitListConstraint(suspicionOptions);
-            CellRangeAddressList suspicionAddressList = new CellRangeAddressList(1, Math.max(1, allApiList.size() + 1000), 25, 25);
+            CellRangeAddressList suspicionAddressList = new CellRangeAddressList(1, Math.max(1, allApiList.size() + 1000), 26, 26);
             DataValidation suspicionValidation = validationHelper.createValidation(suspicionConstraint, suspicionAddressList);
             suspicionValidation.setSuppressDropDownArrow(true); suspicionValidation.setShowErrorBox(true); sheet.addValidationData(suspicionValidation);
 
-            // 2. 미사용 검토결과 드롭다운 (28번)
+            // 2. 미사용 검토결과 드롭다운 (29번)
             String[] reviewOptions = {"O(미사용)", "△(판단불가)", "X(사용)"};
             DataValidationConstraint constraint = validationHelper.createExplicitListConstraint(reviewOptions);
-            CellRangeAddressList addressList = new CellRangeAddressList(1, Math.max(1, allApiList.size() + 1000), 28, 28);
+            CellRangeAddressList addressList = new CellRangeAddressList(1, Math.max(1, allApiList.size() + 1000), 29, 29);
             DataValidation validation = validationHelper.createValidation(constraint, addressList);
             validation.setSuppressDropDownArrow(true); validation.setShowErrorBox(true); sheet.addValidationData(validation);
 
-            // [v13.7] 엑셀 조건부 서식 설정 (인덱스 시프트 반영: X->Y(24), Y->Z(25)) [cite: 2026-03-11]
+            // [v13.8] 엑셀 조건부 서식 설정 (인덱스 시프트 반영: Z(25), AA(26)) [cite: 2026-03-11]
             SheetConditionalFormatting sheetCF = sheet.getSheetConditionalFormatting();
 
-            // 호출건수 조건부 서식 (Y열, 24번) - 빈 셀 강조 제외 로직 [cite: 2026-03-11]
-            CellRangeAddress[] callCountRange = { CellRangeAddress.valueOf("Y2:Y4001") };
-            String callCountFormula = String.format("AND(Y2<>\"\", Y2<=%d)", NOT_USE_LIMIT_COUNT);
+            // 호출건수 조건부 서식 (Z열, 25번) - 빈 셀 강조 제외 로직 [cite: 2026-03-11]
+            CellRangeAddress[] callCountRange = { CellRangeAddress.valueOf("Z2:Z4001") };
+            String callCountFormula = String.format("AND(Z2<>\"\", Z2<=%d)", NOT_USE_LIMIT_COUNT);
             ConditionalFormattingRule callCountRule = sheetCF.createConditionalFormattingRule(callCountFormula);
             PatternFormatting callCountFill = callCountRule.createPatternFormatting();
-            callCountFill.setFillBackgroundColor(IndexedColors.ROSE.getIndex());
-            callCountFill.setFillPattern(PatternFormatting.SOLID_FOREGROUND);
+            callCountFill.setFillBackgroundColor(IndexedColors.ROSE.getIndex()); callCountFill.setFillPattern(PatternFormatting.SOLID_FOREGROUND);
             sheetCF.addConditionalFormatting(callCountRange, callCountRule);
 
-            // 미사용 의심건 조건부 서식 (Z열, 25번) [cite: 2026-03-11]
-            CellRangeAddress[] suspicionRange = { CellRangeAddress.valueOf("Z2:Z4001") };
+            // 미사용 의심건 조건부 서식 (AA열, 26번) [cite: 2026-03-11]
+            CellRangeAddress[] suspicionRange = { CellRangeAddress.valueOf("AA2:AA4001") };
             ConditionalFormattingRule rule3 = sheetCF.createConditionalFormattingRule(ComparisonOperator.EQUAL, "\"★★★\"");
             PatternFormatting fill3 = rule3.createPatternFormatting(); fill3.setFillBackgroundColor(IndexedColors.ROSE.getIndex()); fill3.setFillPattern(PatternFormatting.SOLID_FOREGROUND);
             ConditionalFormattingRule rule2 = sheetCF.createConditionalFormattingRule(ComparisonOperator.EQUAL, "\"★★☆\"");
@@ -296,17 +297,18 @@ public class ApiExcelExporter {
 
                 String autoProgId = autoExtractProgramId(info.apiPath);
 
-                // [v13.7] 관련메뉴 자동 매핑 로직 (requestProperty 추가 연동) [cite: 2026-03-11]
+                // [v13.8] 관련메뉴 자동 매핑 로직 (판단 우선순위 명선님 요청 최적화) [cite: 2026-03-11]
                 String autoRelatedMenu = autoPopulateRelatedMenu(info);
 
                 boolean isWhatapOn = "Y".equalsIgnoreCase(WHATAP_ENABLED);
                 String callCountValue = isWhatapOn ? String.valueOf(totalCalls) : "";
                 String suspicionValue = isWhatapOn ? suspicionScore : "";
 
-                // [v13.7] 데이터 매핑 (Yellow 영역 순서 재조정 반영) [cite: 2026-03-11]
+                // [v13.8] 데이터 매핑 (Yellow 영역 재배치 및 컨트롤러 RequestProperty 반영) [cite: 2026-03-11]
                 String[] data = {String.valueOf(i + 1), "", REPO_NAME, info.apiPath, fullUrl, info.repoPath,
                         info.controllerName, info.methodName, autoProgId,
-                        info.apiOperationValue, info.requestPropertyValue, info.descriptionTag, info.fullComment, info.controllerComment,
+                        info.apiOperationValue, info.descriptionTag, info.fullComment,
+                        info.requestPropertyValue, info.controllerRequestPropertyValue, info.controllerComment,
                         info.isDeprecated, info.git1[0], info.git1[1], info.git1[2], info.git2[0], info.git2[1], info.git2[2],
                         info.git3[0], info.git3[1], info.git3[2], callCountValue, suspicionValue,
                         TEAM_NAME, MANAGER_NAME, "", autoRelatedMenu, "", "", "", "", ""};
@@ -317,58 +319,51 @@ public class ApiExcelExporter {
                     Cell cell = row.createCell(j);
                     if (j == 1) {
                         cell.setCellValue(now); cell.setCellStyle(dateD);
-                    } else if (j == 24) { // 호출건수 컬럼 (Y열)
+                    } else if (j == 25) { // 호출건수 컬럼 (Z열)
                         if (isWhatapOn) {
-                            cell.setCellValue(totalCalls);
-                            cell.setCellStyle(numD);
+                            cell.setCellValue(totalCalls); cell.setCellStyle(numD);
                         } else { cell.setCellValue(""); cell.setCellStyle(centerD); }
-                    } else if (j == 25) { // 미사용 의심건 컬럼 (Z열)
-                        cell.setCellValue(data[j]);
-                        cell.setCellStyle(centerD);
+                    } else if (j == 26) { // 미사용 의심건 컬럼 (AA열)
+                        cell.setCellValue(data[j]); cell.setCellStyle(centerD);
                     } else {
                         cell.setCellValue(data[j]);
-                        // [v13.7] 주석 5종(9, 10, 11, 12, 13) 및 URL 영역 왼쪽 정렬 고정 [cite: 2026-03-11]
-                        boolean isCenter = (j==0 || j==1 || j==2 || (j>=6 && j<=8) || (j>=14 && j<=24) || (j>=26));
+                        // [v13.8] 주석 및 RequestProperty 6종(9~14) 왼쪽 정렬 고수 [cite: 2026-03-11]
+                        boolean isCenter = (j==0 || j==1 || j==2 || (j>=6 && j<=8) || (j>=15 && j<=25) || (j>=27));
 
-                        if (j == 14 && isDep) cell.setCellStyle(depColumnStyle);
+                        if (j == 15 && isDep) cell.setCellStyle(depColumnStyle);
                         else if (j == 4) {
                             cell.setCellStyle(linkD);
                             try {
                                 String encodedUrl = fullUrl.replace("{", "%7B").replace("}", "%7D");
                                 Hyperlink link = helper.createHyperlink(HyperlinkType.URL);
-                                link.setAddress(encodedUrl);
-                                cell.setHyperlink(link);
+                                link.setAddress(encodedUrl); cell.setHyperlink(link);
                             } catch (Exception ignored) { }
                         } else {
-                            if (j >= 26 && j <= 29) {
+                            if (j >= 27 && j <= 30) {
                                 if (isLastRow) {
-                                    if (j == 26) cell.setCellStyle(boxBottomLeft);
-                                    else if (j == 29) cell.setCellStyle(boxBottomRight);
+                                    if (j == 27) cell.setCellStyle(boxBottomLeft);
+                                    else if (j == 30) cell.setCellStyle(boxBottomRight);
                                     else cell.setCellStyle(boxBottom);
                                 } else {
-                                    if (j == 26) cell.setCellStyle(isCenter ? boxLeft : boxLeftLeftAlign);
-                                    else if (j == 29) cell.setCellStyle(isCenter ? boxRight : boxRightLeftAlign);
+                                    if (j == 27) cell.setCellStyle(isCenter ? boxLeft : boxLeftLeftAlign);
+                                    else if (j == 30) cell.setCellStyle(isCenter ? boxRight : boxRightLeftAlign);
                                     else cell.setCellStyle(isCenter ? centerD : leftD);
                                 }
-                            } else {
-                                cell.setCellStyle(isCenter ? centerD : leftD);
-                            }
+                            } else { cell.setCellStyle(isCenter ? centerD : leftD); }
                         }
                     }
                 }
             }
 
-            sheet.setColumnWidth(1, 4000);
-            sheet.setColumnWidth(3, 14500); sheet.setColumnWidth(4, 8500);
+            sheet.setColumnWidth(1, 4000); sheet.setColumnWidth(3, 14500); sheet.setColumnWidth(4, 8500);
             sheet.setColumnWidth(5, 11500); sheet.setColumnWidth(6, 5500); sheet.setColumnWidth(7, 5500);
             sheet.setColumnWidth(8, 5500);
-            // 주석 5종 컬럼 너비 최적화 [cite: 2026-03-11]
-            sheet.setColumnWidth(9, 5800);  sheet.setColumnWidth(10, 5800);
-            sheet.setColumnWidth(11, 5800); sheet.setColumnWidth(12, 5800); sheet.setColumnWidth(13, 5800);
-            sheet.setColumnWidth(26, 4000);
-            sheet.setColumnWidth(28, 3500); // [v13.6] 미사용 검토결과 너비 1/3 수준 축소 [cite: 2026-03-11]
-            sheet.setColumnWidth(29, 6000); // 관련메뉴
-            for (int i = 15; i < headers.length; i++) if(i<26 || i>29) sheet.setColumnWidth(i, 4200);
+            // 주석 6종 컬럼 너비 설정 [cite: 2026-03-11]
+            for (int k = 9; k <= 14; k++) sheet.setColumnWidth(k, 5800);
+            sheet.setColumnWidth(27, 4000);
+            sheet.setColumnWidth(29, 3500); // 미사용 검토결과 축소 유지 [cite: 2026-03-11]
+            sheet.setColumnWidth(30, 6000); // 관련메뉴
+            for (int i = 16; i < headers.length; i++) if(i<27 || i>30) sheet.setColumnWidth(i, 4200);
 
             workbook.write(fos);
             addLog("\n[SUCCESS] 통합 엑셀 저장 완료: " + finalExcelFile.getName());
@@ -377,19 +372,16 @@ public class ApiExcelExporter {
         addLog("\n[FINISH] 전체 분석 작업 종료: " + (System.currentTimeMillis() - startTime) / 1000 + "초 소요");
     }
 
-    /** [v13.7] 관련메뉴(미사용시) 자동 매핑 고도화 (requestProperty 연동 및 우선순위 강화) [cite: 2026-03-11]
-     * 우선순위: ApiOperation > requestProperty > description > 메소드주석 > 컨트롤러주석 */
+    /** [v13.8] 관련메뉴 자동 매핑 로직 (명선님 요청 순서 최적화) [cite: 2026-03-11]
+     * 우선순위: ApiOperation > description > 메소드주석 > RequestProperty(메소드) > RequestProperty(컨트롤러) > 컨트롤러주석 */
     private static String autoPopulateRelatedMenu(ApiInfo info) {
         // 1. ApiOperation 우선순위
         if (info.apiOperationValue != null && !"-".equals(info.apiOperationValue) && !info.apiOperationValue.trim().isEmpty()) return info.apiOperationValue;
 
-        // 2. [v13.7] requestProperty 우선순위 (title 또는 value) [cite: 2026-03-11]
-        if (info.requestPropertyValue != null && !"-".equals(info.requestPropertyValue) && !info.requestPropertyValue.trim().isEmpty()) return info.requestPropertyValue;
-
-        // 3. 메소드 description 주석 우선순위 (@ 생략 허용) [cite: 2026-03-10]
+        // 2. 메소드 description 주석 우선순위 (@ 생략 허용) [cite: 2026-03-10]
         if (info.descriptionTag != null && !"-".equals(info.descriptionTag) && !info.descriptionTag.trim().isEmpty()) return info.descriptionTag;
 
-        // 4. 메소드 주석 (태그 제거 후 첫 문장) [cite: 2026-03-11]
+        // 3. 메소드 주석 (태그 제거 후 첫 문장) [cite: 2026-03-11]
         if (info.fullComment != null && !"-".equals(info.fullComment)) {
             String comment = info.fullComment.trim();
             if (!comment.isEmpty()) {
@@ -398,7 +390,13 @@ public class ApiExcelExporter {
             }
         }
 
-        // 5. 컨트롤러(클래스) 상단 주석 활용 [cite: 2026-03-10]
+        // 4. 메소드 RequestProperty 우선순위 [cite: 2026-03-11]
+        if (info.requestPropertyValue != null && !"-".equals(info.requestPropertyValue) && !info.requestPropertyValue.trim().isEmpty()) return info.requestPropertyValue;
+
+        // 5. 컨트롤러 RequestProperty 백업 [cite: 2026-03-11]
+        if (info.controllerRequestPropertyValue != null && !"-".equals(info.controllerRequestPropertyValue) && !info.controllerRequestPropertyValue.trim().isEmpty()) return info.controllerRequestPropertyValue;
+
+        // 6. 컨트롤러(클래스) 상단 주석 백업 [cite: 2026-03-10]
         if (info.controllerComment != null && !"-".equals(info.controllerComment)) {
             Matcher dM = Pattern.compile("@?description[\\s:]*([^\\n\\r*]+)", Pattern.CASE_INSENSITIVE).matcher(info.controllerComment);
             if (dM.find()) return dM.group(1).trim();
@@ -468,15 +466,20 @@ public class ApiExcelExporter {
     private static List<ApiInfo> extractWithJavaParser(Path filePath, String relPath, List<String[]> git, StringBuilder log) throws Exception {
         List<ApiInfo> apis = new ArrayList<>();
         CompilationUnit cu = StaticJavaParser.parse(new String(Files.readAllBytes(filePath), StandardCharsets.UTF_8));
-        String classPath = "";
-        String controllerComment = "-";
+        String classPath = ""; String controllerComment = "-"; String controllerRequestProperty = "-";
+
         Optional<ClassOrInterfaceDeclaration> mainClass = cu.findFirst(ClassOrInterfaceDeclaration.class);
         if (mainClass.isPresent()) {
             ClassOrInterfaceDeclaration n = mainClass.get();
             controllerComment = n.getComment().isPresent() ? n.getComment().get().getContent().replaceAll("\\r|\\n|\\*", " ").trim() : "-";
+
+            // [v13.8] 컨트롤러 RequestProperty 추출 [cite: 2026-03-11]
+            controllerRequestProperty = extractRequestPropertyFromNode(n);
+
             Optional<AnnotationExpr> classAnn = n.getAnnotationByName("RequestMapping");
             if (classAnn.isPresent()) { List<String> cpList = getPathsFromAnn(classAnn.get()); if (!cpList.isEmpty()) classPath = cpList.get(0).trim(); }
         }
+
         for (MethodDeclaration method : cu.findAll(MethodDeclaration.class)) {
             for (String annName : MAPPING_ANNS) {
                 Optional<AnnotationExpr> methodAnn = method.getAnnotationByName(annName);
@@ -492,20 +495,18 @@ public class ApiExcelExporter {
                         info.controllerName = filePath.getFileName().toString(); info.repoPath = (REPO_NAME + "/" + relPath).replace("\\", "/");
                         info.git1 = git.get(0); info.git2 = git.get(1); info.git3 = git.get(2);
                         info.controllerComment = controllerComment;
+                        info.controllerRequestPropertyValue = controllerRequestProperty;
 
-                        // [v13.7] 메소드 주석 추출 (<h3> 태그 제거 로직 포함) [cite: 2026-03-11]
                         if (method.getComment().isPresent()) {
                             String full = method.getComment().get().getContent();
+                            // [v13.8] 메소드 주석 추출 및 <h3> 태그 제거 [cite: 2026-03-11]
                             info.fullComment = full.replaceAll("\\r|\\n|\\*", " ").replaceAll("(?i)<h3>|</h3>", "").trim();
                             Matcher dM = Pattern.compile("@?description[\\s:]*([^\\n\\r*]+)", Pattern.CASE_INSENSITIVE).matcher(full);
                             info.descriptionTag = dM.find() ? dM.group(1).trim() : "-";
                         } else { info.fullComment = "-"; info.descriptionTag = "-"; }
 
-                        // [v13.7] requestProperty 추출 (title 우선, 없을 시 value) [cite: 2026-03-11]
-                        info.requestPropertyValue = extractAnnotationValue(method, "requestProperty", "title");
-                        if ("-".equals(info.requestPropertyValue)) {
-                            info.requestPropertyValue = extractAnnotationValue(method, "requestProperty", "value");
-                        }
+                        // [v13.8] 메소드 @RequestProperty 추출 [cite: 2026-03-11]
+                        info.requestPropertyValue = extractRequestPropertyFromNode(method);
 
                         info.apiOperationValue = extractAnnotationValue(method, "ApiOperation", "value");
                         apis.add(info);
@@ -517,8 +518,15 @@ public class ApiExcelExporter {
         return apis;
     }
 
-    private static String extractAnnotationValue(MethodDeclaration method, String annName, String attrName) {
-        Optional<AnnotationExpr> ann = method.getAnnotationByName(annName);
+    /** [v13.8] RequestProperty(R대문자) title 우선, 없을 시 value 참조 로직 [cite: 2026-03-11] */
+    private static String extractRequestPropertyFromNode(com.github.javaparser.ast.nodeTypes.NodeWithAnnotations<?> node) {
+        String title = extractValueFromNode(node, "RequestProperty", "title");
+        if (!"-".equals(title)) return title;
+        return extractValueFromNode(node, "RequestProperty", "value");
+    }
+
+    private static String extractValueFromNode(com.github.javaparser.ast.nodeTypes.NodeWithAnnotations<?> node, String annName, String attrName) {
+        Optional<AnnotationExpr> ann = node.getAnnotationByName(annName);
         if (ann.isPresent() && ann.get() instanceof NormalAnnotationExpr) {
             return ((NormalAnnotationExpr) ann.get()).getPairs().stream()
                     .filter(p -> p.getNameAsString().equals(attrName))
@@ -530,13 +538,29 @@ public class ApiExcelExporter {
         return "-";
     }
 
+    private static String extractAnnotationValue(MethodDeclaration method, String annName, String attrName) {
+        return extractValueFromNode(method, annName, attrName);
+    }
+
     private static List<ApiInfo> extractWithRegex(Path filePath, String relPath, List<String[]> git, StringBuilder log) {
         List<ApiInfo> apis = new ArrayList<>();
         try {
             String raw = new String(Files.readAllBytes(filePath), StandardCharsets.UTF_8);
             String clean = raw.replaceAll("(?s)/\\*.*?\\*/", " ").replaceAll("//.*", " ");
+
             Matcher cM_Main = Pattern.compile("/\\*\\*(.*?)\\*/", Pattern.DOTALL).matcher(raw);
             String controllerComment = cM_Main.find() ? cM_Main.group(1).replaceAll("\\r|\\n|\\*", " ").trim() : "-";
+
+            // [v13.8 Regex] 컨트롤러 RequestProperty 추출 [cite: 2026-03-11]
+            String controllerRequestProperty = "-";
+            String headChunk = raw.substring(0, Math.min(raw.length(), 2000));
+            Matcher rPC_Title = Pattern.compile("@RequestProperty\\s*\\(.*?title\\s*=\\s*\"([^\"]+)\".*?\\)", Pattern.DOTALL).matcher(headChunk);
+            if (rPC_Title.find()) controllerRequestProperty = rPC_Title.group(1);
+            else {
+                Matcher rPC_Value = Pattern.compile("@RequestProperty\\s*\\(.*?value\\s*=\\s*\"([^\"]+)\".*?\\)", Pattern.DOTALL).matcher(headChunk);
+                if (rPC_Value.find()) controllerRequestProperty = rPC_Value.group(1);
+            }
+
             String classPath = "";
             Matcher cm = Pattern.compile("@RequestMapping\\s*\\(\\s*(?:(?:value|path)\\s*=\\s*)?\"([^\"]+)\"").matcher(clean);
             if (cm.find()) classPath = cm.group(1).trim();
@@ -558,6 +582,7 @@ public class ApiExcelExporter {
                             info.controllerName = filePath.getFileName().toString(); info.repoPath = (REPO_NAME + "/" + relPath).replace("\\", "/");
                             info.git1 = git.get(0); info.git2 = git.get(1); info.git3 = git.get(2);
                             info.controllerComment = controllerComment;
+                            info.controllerRequestPropertyValue = controllerRequestProperty;
                             String headArea = raw.substring(Math.max(0, mMatcher.start() - 1000), mMatcher.start());
                             Matcher cM = Pattern.compile("/\\*\\*(.*?)\\*/", Pattern.DOTALL).matcher(headArea);
                             if (cM.find()) {
@@ -567,11 +592,11 @@ public class ApiExcelExporter {
                                 info.descriptionTag = dM.find() ? dM.group(1).trim() : "-";
                             } else { info.fullComment = "-"; info.descriptionTag = "-"; }
 
-                            // [v13.7] Regex requestProperty 추출 (title 우선, 없을 시 value) [cite: 2026-03-11]
-                            Matcher rP_Title = Pattern.compile("@requestProperty\\s*\\(.*?title\\s*=\\s*\"([^\"]+)\".*?\\)", Pattern.DOTALL).matcher(headArea);
+                            // [v13.8 Regex] 메소드 RequestProperty 추출 [cite: 2026-03-11]
+                            Matcher rP_Title = Pattern.compile("@RequestProperty\\s*\\(.*?title\\s*=\\s*\"([^\"]+)\".*?\\)", Pattern.DOTALL).matcher(headArea);
                             if (rP_Title.find()) info.requestPropertyValue = rP_Title.group(1);
                             else {
-                                Matcher rP_Value = Pattern.compile("@requestProperty\\s*\\(.*?value\\s*=\\s*\"([^\"]+)\".*?\\)", Pattern.DOTALL).matcher(headArea);
+                                Matcher rP_Value = Pattern.compile("@RequestProperty\\s*\\(.*?value\\s*=\\s*\"([^\"]+)\".*?\\)", Pattern.DOTALL).matcher(headArea);
                                 info.requestPropertyValue = rP_Value.find() ? rP_Value.group(1) : "-";
                             }
 
@@ -597,7 +622,7 @@ public class ApiExcelExporter {
     }
 
     private static void addLog(String msg) { System.out.println(msg); if (!logPath.isEmpty()) { try (FileWriter fw = new FileWriter(logPath, true); PrintWriter pw = new PrintWriter(fw)) { pw.println(msg); } catch (IOException ignored) {} } }
-    private static void saveInitialLogsToPath() { try (FileWriter fw = new FileWriter(logPath, false); PrintWriter pw = new PrintWriter(fw)) { pw.println("==============================================================="); pw.println("[START] " + REPO_NAME + " API 추출 및 Whatap 통합 시작 (v13.7)"); pw.println("==============================================================="); synchronized (RUNTIME_LOGS) { for (String l : RUNTIME_LOGS) pw.println(l); } } catch (IOException ignored) {} }
+    private static void saveInitialLogsToPath() { try (FileWriter fw = new FileWriter(logPath, false); PrintWriter pw = new PrintWriter(fw)) { pw.println("==============================================================="); pw.println("[START] " + REPO_NAME + " API 추출 및 Whatap 통합 시작 (v13.8)"); pw.println("==============================================================="); synchronized (RUNTIME_LOGS) { for (String l : RUNTIME_LOGS) pw.println(l); } } catch (IOException ignored) {} }
     private static void addExceptionLog(String title, Exception e) { StringWriter sw = new StringWriter(); e.printStackTrace(new PrintWriter(sw)); addLog("\n[ERROR] " + title + "\n" + sw.toString()); }
 
     private static List<String[]> getRecentGitHistories(String rel, String root, int c) {
@@ -626,7 +651,7 @@ public class ApiExcelExporter {
 
     static class ApiInfo {
         String apiPath, methodName, isDeprecated, controllerName, repoPath;
-        String controllerComment, fullComment, descriptionTag, apiOperationValue, requestPropertyValue;
+        String controllerComment, fullComment, descriptionTag, apiOperationValue, requestPropertyValue, controllerRequestPropertyValue;
         String[] git1, git2, git3; String getApiPath() { return apiPath; }
     }
 }
