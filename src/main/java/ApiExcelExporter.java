@@ -23,10 +23,10 @@ import java.util.stream.Collectors;
 
 /**
  * 프로젝트명: ApiExcelExporter (Bitbucket 관리형)
- * Version: 13.15 (엑셀 저장 시 하이퍼링크 검증 오류 해결 및 불편사항 개선)
+ * Version: 13.16 (Regex 엔진 클래스 레벨 상수 치환 버그 수정)
  * 반영사항:
- * 1. [버그 수정] Apache POI의 하이퍼링크 URL 검증 중 발생하는 IllegalArgumentException 해결 [cite: 2026-03-20]
- * 2. [사용성 개선] 엑셀 클릭 시 원치 않는 사이트 이동 불편함을 해소하기 위해 '전체 URL' 컬럼의 하이퍼링크(파란색 밑줄) 제거 및 일반 텍스트화 [cite: 2026-03-20]
+ * 1. [버그 수정] Text Block(""") 등으로 인해 Regex 엔진 폴백 시, 컨트롤러 클래스 상단 @RequestMapping의 상수가 치환되지 않아 경로가 누락되는 현상 수정 [cite: 2026-03-20]
+ * 2. [기능 유지] 13.15 버전의 엑셀 하이퍼링크 검증 오류 해결 및 클릭 이동 방지 처리 유지 [cite: 2026-03-20]
  * 3. [로깅 보완] JavaParser 및 Regex 분석 시 모든 메소드 진입 및 스킵 사유 상세 추적 로깅 유지 [cite: 2026-03-20]
  * 4. [기능 유지] PATH_CONSTANTS 상수 치환, API_PATH_PREFIX 일괄 추가 로직 완벽 보존 [cite: 2026-03-12]
  * 5. [성능/유지] i9-13900 병렬 분석, 기존 상세 주석 전수 보존 [cite: 2026-02-05, 2026-02-23]
@@ -102,7 +102,7 @@ public class ApiExcelExporter {
         String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd'_추출'"));
 
         System.out.println("===============================================================");
-        System.out.println("[START] " + REPO_NAME + " API 추출 및 Whatap 통합 시작 (v13.15)");
+        System.out.println("[START] " + REPO_NAME + " API 추출 및 Whatap 통합 시작 (v13.16)");
         System.out.println("[INFO] 관리 정보: 팀[" + TEAM_NAME + "] / 담당자[" + MANAGER_NAME + "]");
         System.out.println("===============================================================");
 
@@ -165,8 +165,6 @@ public class ApiExcelExporter {
             numD.setBorderBottom(BorderStyle.THIN); numD.setBorderTop(BorderStyle.THIN); numD.setBorderLeft(BorderStyle.THIN); numD.setBorderRight(BorderStyle.THIN);
             CellStyle dateD = createStyle(workbook, null, false, true); dateD.setDataFormat(workbook.createDataFormat().getFormat("yyyy-mm-dd"));
             CellStyle depColumnStyle = createStyle(workbook, IndexedColors.GREY_25_PERCENT.getIndex(), false, true);
-
-            // [v13.15] 사용자의 요청으로 하이퍼링크 관련 스타일(linkD) 완전 제거 [cite: 2026-03-20]
 
             CellStyle boxLeft = createStyle(workbook, null, false, true); boxLeft.setBorderLeft(BorderStyle.THICK);
             CellStyle boxRight = createStyle(workbook, null, false, true); boxRight.setBorderRight(BorderStyle.THICK);
@@ -270,7 +268,6 @@ public class ApiExcelExporter {
                         cell.setCellValue(data[j]);
                         boolean isCenter = (j==0 || j==1 || j==2 || (j>=6 && j<=8) || (j>=15 && j<=25) || (j>=27));
                         if (j == 15 && isDep) cell.setCellStyle(depColumnStyle);
-                            // [v13.15] 하이퍼링크 세팅 로직을 제거하고 일반 텍스트 셀처럼 처리되도록 병합 [cite: 2026-03-20]
                         else {
                             if (j >= 27 && j <= 30) {
                                 if (isLastRow) { cell.setCellStyle(j==27 ? boxBottomLeft : (j==30 ? boxBottomRight : boxBottom)); }
@@ -483,8 +480,21 @@ public class ApiExcelExporter {
             String clean = raw.replaceAll("(?s)/\\*.*?\\*/", " ").replaceAll("//.*", " ");
             Matcher cM_Main = Pattern.compile("/\\*\\*(.*?)\\*/", Pattern.DOTALL).matcher(raw);
             String controllerComment = cM_Main.find() ? cM_Main.group(1).replaceAll("\\r|\\n|\\*", " ").trim() : "-";
-            String classPath = ""; Matcher cm = Pattern.compile("@RequestMapping\\s*\\(\\s*(?:(?:value|path)\\s*=\\s*)?\"([^\"]+)\"").matcher(clean);
-            if (cm.find()) classPath = cm.group(1).trim();
+
+            // [v13.16 BUG FIX] Regex 엔진에서도 컨트롤러 레벨 상수 치환 지원 (헤더 영역 한정 검색) [cite: 2026-03-20]
+            String classPath = "";
+            String classHeadChunk = clean.substring(0, Math.min(clean.length(), 3000));
+            Matcher cm = Pattern.compile("@RequestMapping\\s*\\((.*?)\\)", Pattern.DOTALL).matcher(classHeadChunk);
+            if (cm.find()) {
+                String cParams = cm.group(1);
+                for (Map.Entry<String, String> entry : PATH_CONSTANTS_MAP.entrySet()) {
+                    cParams = cParams.replace(entry.getKey(), "\"" + entry.getValue() + "\"");
+                }
+                cParams = cParams.replaceAll("\"\\s*\\+\\s*\"", "");
+                Matcher cp = Pattern.compile("\"([^\"]+)\"").matcher(cParams);
+                if (cp.find()) classPath = cp.group(1).trim();
+            }
+
             Matcher mMatcher = Pattern.compile("@(GetMapping|PostMapping|RequestMapping|PutMapping|DeleteMapping|PatchMapping)\\s*\\((.*?)\\)", Pattern.DOTALL).matcher(raw);
             while (mMatcher.find()) {
                 String mappingType = mMatcher.group(1);
@@ -535,7 +545,7 @@ public class ApiExcelExporter {
     }
 
     private static void addLog(String msg) { System.out.println(msg); if (logPath != null && !logPath.isEmpty()) { try (FileWriter fw = new FileWriter(logPath, true); PrintWriter pw = new PrintWriter(fw)) { pw.println(msg); } catch (IOException ignored) {} } }
-    private static void saveInitialLogsToPath() { try (FileWriter fw = new FileWriter(logPath, false); PrintWriter pw = new PrintWriter(fw)) { pw.println("==============================================================="); pw.println("[START] " + REPO_NAME + " API 추출 및 Whatap 통합 시작 (v13.15)"); pw.println("==============================================================="); synchronized (RUNTIME_LOGS) { for (String l : RUNTIME_LOGS) pw.println(l); } } catch (IOException ignored) {} }
+    private static void saveInitialLogsToPath() { try (FileWriter fw = new FileWriter(logPath, false); PrintWriter pw = new PrintWriter(fw)) { pw.println("==============================================================="); pw.println("[START] " + REPO_NAME + " API 추출 및 Whatap 통합 시작 (v13.16)"); pw.println("==============================================================="); synchronized (RUNTIME_LOGS) { for (String l : RUNTIME_LOGS) pw.println(l); } } catch (IOException ignored) {} }
     private static void addExceptionLog(String title, Exception e) { StringWriter sw = new StringWriter(); e.printStackTrace(new PrintWriter(sw)); addLog("\n[ERROR] " + title + "\n" + sw.toString()); }
 
     private static List<String[]> getRecentGitHistories(String rel, String root, int c) {
