@@ -4,7 +4,6 @@ import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
 import com.github.javaparser.ast.body.MethodDeclaration;
 import com.github.javaparser.ast.expr.*;
 import com.github.javaparser.ast.comments.Comment;
-import org.apache.poi.common.usermodel.HyperlinkType;
 import org.apache.poi.ss.usermodel.*;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.apache.poi.ss.util.CellRangeAddress;
@@ -24,13 +23,13 @@ import java.util.stream.Collectors;
 
 /**
  * 프로젝트명: ApiExcelExporter (Bitbucket 관리형)
- * Version: 13.14 (메소드 단위 상세 분석 추적 로깅 탑재)
+ * Version: 13.15 (엑셀 저장 시 하이퍼링크 검증 오류 해결 및 불편사항 개선)
  * 반영사항:
- * 1. [로깅 보완] JavaParser 및 Regex 분석 시 모든 메소드를 로깅하고, 스킵된 사유([Skip])를 상세히 기록 [cite: 2026-03-20]
- * 2. [기능 유지] config.properties의 API_PATH_PREFIX 값을 읽어 모든 추출된 API 경로 앞에 일괄 추가 [cite: 2026-03-12]
- * 3. [기능 유지] PATH_CONSTANTS를 이용한 상수 치환(evaluateExpression) 및 텍스트 정제(cleanMeaningfulText) 완벽 보존 [cite: 2026-03-12]
- * 4. [레이아웃 유지] 대량 데이터 조건부 서식 동적 범위(4,000건 이상), 관련메뉴 위계 로직 완벽 보존 [cite: 2026-03-11]
- * 5. [성능/유지] i9-13900 병렬 분석, 기존 로그 포맷([Found]), 소스 코드 내 모든 상세 주석 완벽 보존 [cite: 2026-02-05, 2026-02-23]
+ * 1. [버그 수정] Apache POI의 하이퍼링크 URL 검증 중 발생하는 IllegalArgumentException 해결 [cite: 2026-03-20]
+ * 2. [사용성 개선] 엑셀 클릭 시 원치 않는 사이트 이동 불편함을 해소하기 위해 '전체 URL' 컬럼의 하이퍼링크(파란색 밑줄) 제거 및 일반 텍스트화 [cite: 2026-03-20]
+ * 3. [로깅 보완] JavaParser 및 Regex 분석 시 모든 메소드 진입 및 스킵 사유 상세 추적 로깅 유지 [cite: 2026-03-20]
+ * 4. [기능 유지] PATH_CONSTANTS 상수 치환, API_PATH_PREFIX 일괄 추가 로직 완벽 보존 [cite: 2026-03-12]
+ * 5. [성능/유지] i9-13900 병렬 분석, 기존 상세 주석 전수 보존 [cite: 2026-02-05, 2026-02-23]
  */
 public class ApiExcelExporter {
 
@@ -41,7 +40,7 @@ public class ApiExcelExporter {
     /** [핵심변수 1] 레파지토리 이름 : 파일명 생성 시 식별자로 활용 */
     private static String REPO_NAME = "";
 
-    /** [핵심변수 2] 기본 도메인 주소 : 엑셀 내 전체 URL 하이퍼링크 생성용 */
+    /** [핵심변수 2] 기본 도메인 주소 : 전체 URL 생성용 */
     private static String DOMAIN = "";
 
     /** [핵심변수 3] 분석할 Java 소스 로컬 절대 경로 */
@@ -65,13 +64,13 @@ public class ApiExcelExporter {
     /** [v11.3 신규] 미사용 의심 판별 기준일 (YYYY-MM-DD) */
     private static String LAST_COMMIT_DATE = "1900-01-01";
 
-    /** [v13.6 신규] Whatap 연동 여부 : N일 경우 호출건수 등을 표시하지 않음 [cite: 2026-03-11] */
+    /** [v13.6 신규] Whatap 연동 여부 : N일 경우 호출건수 등을 표시하지 않음 */
     private static String WHATAP_ENABLED = "Y";
 
-    /** [v13.12 신규] API 경로 내 상수 치환용 맵 (config.properties의 PATH_CONSTANTS) [cite: 2026-03-12] */
+    /** [v13.12 신규] API 경로 내 상수 치환용 맵 (config.properties의 PATH_CONSTANTS) */
     private static final Map<String, String> PATH_CONSTANTS_MAP = new HashMap<>();
 
-    /** [v13.13 신규] 전체 API 경로 앞에 일괄 추가할 Prefix (config.properties의 API_PATH_PREFIX) [cite: 2026-03-12] */
+    /** [v13.13 신규] 전체 API 경로 앞에 일괄 추가할 Prefix (config.properties의 API_PATH_PREFIX) */
     private static String API_PATH_PREFIX = "";
 
     /** 설정 파일 로드 성공 여부 플래그 */
@@ -103,7 +102,7 @@ public class ApiExcelExporter {
         String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd'_추출'"));
 
         System.out.println("===============================================================");
-        System.out.println("[START] " + REPO_NAME + " API 추출 및 Whatap 통합 시작 (v13.14)");
+        System.out.println("[START] " + REPO_NAME + " API 추출 및 Whatap 통합 시작 (v13.15)");
         System.out.println("[INFO] 관리 정보: 팀[" + TEAM_NAME + "] / 담당자[" + MANAGER_NAME + "]");
         System.out.println("===============================================================");
 
@@ -166,7 +165,8 @@ public class ApiExcelExporter {
             numD.setBorderBottom(BorderStyle.THIN); numD.setBorderTop(BorderStyle.THIN); numD.setBorderLeft(BorderStyle.THIN); numD.setBorderRight(BorderStyle.THIN);
             CellStyle dateD = createStyle(workbook, null, false, true); dateD.setDataFormat(workbook.createDataFormat().getFormat("yyyy-mm-dd"));
             CellStyle depColumnStyle = createStyle(workbook, IndexedColors.GREY_25_PERCENT.getIndex(), false, true);
-            CellStyle linkD = createStyle(workbook, null, false, false); Font linkFont = workbook.createFont(); linkFont.setColor(IndexedColors.BLUE.getIndex()); linkFont.setUnderline(Font.U_SINGLE); linkD.setFont(linkFont);
+
+            // [v13.15] 사용자의 요청으로 하이퍼링크 관련 스타일(linkD) 완전 제거 [cite: 2026-03-20]
 
             CellStyle boxLeft = createStyle(workbook, null, false, true); boxLeft.setBorderLeft(BorderStyle.THICK);
             CellStyle boxRight = createStyle(workbook, null, false, true); boxRight.setBorderRight(BorderStyle.THICK);
@@ -270,10 +270,8 @@ public class ApiExcelExporter {
                         cell.setCellValue(data[j]);
                         boolean isCenter = (j==0 || j==1 || j==2 || (j>=6 && j<=8) || (j>=15 && j<=25) || (j>=27));
                         if (j == 15 && isDep) cell.setCellStyle(depColumnStyle);
-                        else if (j == 4) {
-                            cell.setCellStyle(linkD);
-                            try { cell.setHyperlink(helper.createHyperlink(HyperlinkType.URL)); cell.getHyperlink().setAddress(fullUrl.replace("{", "%7B").replace("}", "%7D")); } catch (Exception ignored) {}
-                        } else {
+                            // [v13.15] 하이퍼링크 세팅 로직을 제거하고 일반 텍스트 셀처럼 처리되도록 병합 [cite: 2026-03-20]
+                        else {
                             if (j >= 27 && j <= 30) {
                                 if (isLastRow) { cell.setCellStyle(j==27 ? boxBottomLeft : (j==30 ? boxBottomRight : boxBottom)); }
                                 else { cell.setCellStyle(j==27 ? (isCenter ? boxLeft : boxLeftLeftAlign) : (j==30 ? (isCenter ? boxRight : boxRightLeftAlign) : (isCenter ? centerD : leftD))); }
@@ -383,7 +381,6 @@ public class ApiExcelExporter {
         }
 
         for (MethodDeclaration method : cu.findAll(MethodDeclaration.class)) {
-            // [v13.14 상세 로깅 추가] 분석 진입점 기록 [cite: 2026-03-20]
             log.append("\n    * [Analyze] 메소드명: ").append(method.getNameAsString());
             boolean hasMapping = false;
 
@@ -417,7 +414,6 @@ public class ApiExcelExporter {
                     }
                 }
             }
-            // [v13.14 상세 로깅 추가] 매핑 어노테이션이 없어 누락되는 사유 명시 [cite: 2026-03-20]
             if (!hasMapping) {
                 log.append("\n      └ [Skip] 매핑 어노테이션(RequestMapping 등) 미존재");
             }
@@ -502,7 +498,6 @@ public class ApiExcelExporter {
                 Matcher mName = Pattern.compile("(?:public|private|protected)\\s+[\\w<>,\\s]+\\s+(\\w+)\\s*\\(").matcher(clean.substring(mMatcher.end(), Math.min(mMatcher.end() + 1000, clean.length())));
                 if (mName.find()) {
                     String methodNameStr = mName.group(1);
-                    // [v13.14 상세 로깅 추가] Regex 모드 진입 기록 [cite: 2026-03-20]
                     log.append("\n    * [Analyze-Regex] 메소드명: ").append(methodNameStr).append(" (").append(mappingType).append(")");
 
                     Matcher p = Pattern.compile("\"([^\"]+)\"").matcher(params);
@@ -525,7 +520,6 @@ public class ApiExcelExporter {
                             apis.add(info);
                             log.append("\n      └ [Found-Regex] ").append(info.apiPath);
                         } else {
-                            // [v13.14 상세 로깅 추가] 문자열 스킵 사유 [cite: 2026-03-20]
                             log.append("\n      └ [Skip-Regex] RequestMethod 포함 구문 스킵: ").append(s);
                         }
                     }
@@ -533,7 +527,6 @@ public class ApiExcelExporter {
                         log.append("\n      └ [Skip-Regex] 유효한 문자열 경로 추출 실패");
                     }
                 } else {
-                    // [v13.14 상세 로깅 추가] 메소드 시그니처 매칭 실패 사유 [cite: 2026-03-20]
                     log.append("\n    * [Skip-Regex] 어노테이션(").append(mappingType).append(") 존재하나 메소드 매칭 실패");
                 }
             }
@@ -542,7 +535,7 @@ public class ApiExcelExporter {
     }
 
     private static void addLog(String msg) { System.out.println(msg); if (logPath != null && !logPath.isEmpty()) { try (FileWriter fw = new FileWriter(logPath, true); PrintWriter pw = new PrintWriter(fw)) { pw.println(msg); } catch (IOException ignored) {} } }
-    private static void saveInitialLogsToPath() { try (FileWriter fw = new FileWriter(logPath, false); PrintWriter pw = new PrintWriter(fw)) { pw.println("==============================================================="); pw.println("[START] " + REPO_NAME + " API 추출 및 Whatap 통합 시작 (v13.14)"); pw.println("==============================================================="); synchronized (RUNTIME_LOGS) { for (String l : RUNTIME_LOGS) pw.println(l); } } catch (IOException ignored) {} }
+    private static void saveInitialLogsToPath() { try (FileWriter fw = new FileWriter(logPath, false); PrintWriter pw = new PrintWriter(fw)) { pw.println("==============================================================="); pw.println("[START] " + REPO_NAME + " API 추출 및 Whatap 통합 시작 (v13.15)"); pw.println("==============================================================="); synchronized (RUNTIME_LOGS) { for (String l : RUNTIME_LOGS) pw.println(l); } } catch (IOException ignored) {} }
     private static void addExceptionLog(String title, Exception e) { StringWriter sw = new StringWriter(); e.printStackTrace(new PrintWriter(sw)); addLog("\n[ERROR] " + title + "\n" + sw.toString()); }
 
     private static List<String[]> getRecentGitHistories(String rel, String root, int c) {
