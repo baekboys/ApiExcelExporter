@@ -24,13 +24,13 @@ import java.util.stream.Collectors;
 
 /**
  * 프로젝트명: ApiExcelExporter (Bitbucket 관리형)
- * Version: 13.13 (Global API Prefix 일괄 추가 기능 적용)
+ * Version: 13.14 (메소드 단위 상세 분석 추적 로깅 탑재)
  * 반영사항:
- * 1. [기능 추가] config.properties의 API_PATH_PREFIX 값을 읽어 모든 추출된 API 경로 앞에 일괄 추가 [cite: 2026-03-12]
- * 2. [매핑 보장] Prefix 및 상수가 치환된 최종 조립 경로를 바탕으로 Whatap 통계(whatapStats)와 완벽히 매칭 [cite: 2026-03-12]
+ * 1. [로깅 보완] JavaParser 및 Regex 분석 시 모든 메소드를 로깅하고, 스킵된 사유([Skip])를 상세히 기록 [cite: 2026-03-20]
+ * 2. [기능 유지] config.properties의 API_PATH_PREFIX 값을 읽어 모든 추출된 API 경로 앞에 일괄 추가 [cite: 2026-03-12]
  * 3. [기능 유지] PATH_CONSTANTS를 이용한 상수 치환(evaluateExpression) 및 텍스트 정제(cleanMeaningfulText) 완벽 보존 [cite: 2026-03-12]
  * 4. [레이아웃 유지] 대량 데이터 조건부 서식 동적 범위(4,000건 이상), 관련메뉴 위계 로직 완벽 보존 [cite: 2026-03-11]
- * 5. [성능/유지] i9-13900 병렬 분석, 상세 로그(Found), 소스 코드 내 모든 상세 주석 완벽 보존 [cite: 2026-02-05, 2026-02-23]
+ * 5. [성능/유지] i9-13900 병렬 분석, 기존 로그 포맷([Found]), 소스 코드 내 모든 상세 주석 완벽 보존 [cite: 2026-02-05, 2026-02-23]
  */
 public class ApiExcelExporter {
 
@@ -103,7 +103,7 @@ public class ApiExcelExporter {
         String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd'_추출'"));
 
         System.out.println("===============================================================");
-        System.out.println("[START] " + REPO_NAME + " API 추출 및 Whatap 통합 시작 (v13.13)");
+        System.out.println("[START] " + REPO_NAME + " API 추출 및 Whatap 통합 시작 (v13.14)");
         System.out.println("[INFO] 관리 정보: 팀[" + TEAM_NAME + "] / 담당자[" + MANAGER_NAME + "]");
         System.out.println("===============================================================");
 
@@ -352,7 +352,6 @@ public class ApiExcelExporter {
             LAST_COMMIT_DATE = prop.getProperty("LAST_COMMIT_DATE", "1900-01-01").trim();
             WHATAP_ENABLED = prop.getProperty("WHATAP_ENABLED", "Y").trim();
 
-            // [v13.13 신규] API_PATH_PREFIX 로드 [cite: 2026-03-12]
             API_PATH_PREFIX = prop.getProperty("API_PATH_PREFIX", "").trim();
 
             String pathConstantsStr = prop.getProperty("PATH_CONSTANTS", "").trim();
@@ -382,14 +381,22 @@ public class ApiExcelExporter {
             Optional<AnnotationExpr> classAnn = n.getAnnotationByName("RequestMapping");
             if (classAnn.isPresent()) { List<String> cpList = getPathsFromAnn(classAnn.get()); if (!cpList.isEmpty()) classPath = cpList.get(0).trim(); }
         }
+
         for (MethodDeclaration method : cu.findAll(MethodDeclaration.class)) {
+            // [v13.14 상세 로깅 추가] 분석 진입점 기록 [cite: 2026-03-20]
+            log.append("\n    * [Analyze] 메소드명: ").append(method.getNameAsString());
+            boolean hasMapping = false;
+
             for (String annName : MAPPING_ANNS) {
                 Optional<AnnotationExpr> methodAnn = method.getAnnotationByName(annName);
                 if (methodAnn.isPresent()) {
+                    hasMapping = true;
                     List<String> subPaths = getPathsFromAnn(methodAnn.get());
-                    if (subPaths.isEmpty()) subPaths.add("");
+                    if (subPaths.isEmpty()) {
+                        subPaths.add("");
+                        log.append("\n      - [Info] 매핑값 없음, 기본(\"\") 경로로 처리");
+                    }
                     for (String s : subPaths) {
-                        // [v13.13 변경] API_PATH_PREFIX를 최종 조립 과정에 추가 [cite: 2026-03-12]
                         String finalPath = (API_PATH_PREFIX + classPath + (s.trim().startsWith("/") ? s.trim() : (s.trim().isEmpty() ? "" : "/" + s.trim()))).replaceAll("/+", "/");
                         ApiInfo info = new ApiInfo();
                         info.apiPath = (finalPath.isEmpty() ? "/" : finalPath);
@@ -405,9 +412,14 @@ public class ApiExcelExporter {
                         } else { info.fullComment = "-"; info.descriptionTag = "-"; }
                         info.requestPropertyValue = extractRequestPropertyFromNode(method);
                         info.apiOperationValue = extractAnnotationValue(method, "ApiOperation", "value");
-                        apis.add(info); log.append("\n    └ [Found] ").append(info.apiPath);
+                        apis.add(info);
+                        log.append("\n      └ [Found] ").append(info.apiPath);
                     }
                 }
+            }
+            // [v13.14 상세 로깅 추가] 매핑 어노테이션이 없어 누락되는 사유 명시 [cite: 2026-03-20]
+            if (!hasMapping) {
+                log.append("\n      └ [Skip] 매핑 어노테이션(RequestMapping 등) 미존재");
             }
         }
         return apis;
@@ -479,6 +491,7 @@ public class ApiExcelExporter {
             if (cm.find()) classPath = cm.group(1).trim();
             Matcher mMatcher = Pattern.compile("@(GetMapping|PostMapping|RequestMapping|PutMapping|DeleteMapping|PatchMapping)\\s*\\((.*?)\\)", Pattern.DOTALL).matcher(raw);
             while (mMatcher.find()) {
+                String mappingType = mMatcher.group(1);
                 String params = mMatcher.group(2);
 
                 for (Map.Entry<String, String> entry : PATH_CONSTANTS_MAP.entrySet()) {
@@ -488,14 +501,19 @@ public class ApiExcelExporter {
 
                 Matcher mName = Pattern.compile("(?:public|private|protected)\\s+[\\w<>,\\s]+\\s+(\\w+)\\s*\\(").matcher(clean.substring(mMatcher.end(), Math.min(mMatcher.end() + 1000, clean.length())));
                 if (mName.find()) {
+                    String methodNameStr = mName.group(1);
+                    // [v13.14 상세 로깅 추가] Regex 모드 진입 기록 [cite: 2026-03-20]
+                    log.append("\n    * [Analyze-Regex] 메소드명: ").append(methodNameStr).append(" (").append(mappingType).append(")");
+
                     Matcher p = Pattern.compile("\"([^\"]+)\"").matcher(params);
+                    boolean foundValidPath = false;
                     while (p.find()) {
                         String s = p.group(1).trim();
                         if (!s.contains("RequestMethod")) {
-                            // [v13.13 변경] 정규식 엔진에서도 API_PATH_PREFIX를 최종 조립 과정에 추가 [cite: 2026-03-12]
+                            foundValidPath = true;
                             String finalPath = (API_PATH_PREFIX + classPath + (s.startsWith("/") ? s : (s.isEmpty() ? "" : "/" + s))).replaceAll("/+", "/");
                             ApiInfo info = new ApiInfo(); info.apiPath = (finalPath.isEmpty() ? "/" : finalPath);
-                            info.methodName = mName.group(1); info.isDeprecated = clean.substring(Math.max(0, mMatcher.start() - 300), mMatcher.start()).contains("@Deprecated") ? "Y" : "N";
+                            info.methodName = methodNameStr; info.isDeprecated = clean.substring(Math.max(0, mMatcher.start() - 300), mMatcher.start()).contains("@Deprecated") ? "Y" : "N";
                             info.controllerName = filePath.getFileName().toString(); info.repoPath = (REPO_NAME + "/" + relPath).replace("\\", "/");
                             info.git1 = git.get(0); info.git2 = git.get(1); info.git3 = git.get(2);
                             info.controllerComment = controllerComment; String headArea = raw.substring(Math.max(0, mMatcher.start() - 1000), mMatcher.start());
@@ -504,9 +522,19 @@ public class ApiExcelExporter {
                                 Matcher dM = Pattern.compile("@?(description|deprecation)[\\s:]*([^@\\n\\r*]+)", Pattern.CASE_INSENSITIVE).matcher(cM.group(1));
                                 info.descriptionTag = dM.find() ? dM.group(2).trim() : "-";
                             } else { info.fullComment = "-"; info.descriptionTag = "-"; }
-                            apis.add(info); log.append("\n    └ [Found-Regex] ").append(info.apiPath);
+                            apis.add(info);
+                            log.append("\n      └ [Found-Regex] ").append(info.apiPath);
+                        } else {
+                            // [v13.14 상세 로깅 추가] 문자열 스킵 사유 [cite: 2026-03-20]
+                            log.append("\n      └ [Skip-Regex] RequestMethod 포함 구문 스킵: ").append(s);
                         }
                     }
+                    if (!foundValidPath) {
+                        log.append("\n      └ [Skip-Regex] 유효한 문자열 경로 추출 실패");
+                    }
+                } else {
+                    // [v13.14 상세 로깅 추가] 메소드 시그니처 매칭 실패 사유 [cite: 2026-03-20]
+                    log.append("\n    * [Skip-Regex] 어노테이션(").append(mappingType).append(") 존재하나 메소드 매칭 실패");
                 }
             }
         } catch (Exception ignored) {}
@@ -514,7 +542,7 @@ public class ApiExcelExporter {
     }
 
     private static void addLog(String msg) { System.out.println(msg); if (logPath != null && !logPath.isEmpty()) { try (FileWriter fw = new FileWriter(logPath, true); PrintWriter pw = new PrintWriter(fw)) { pw.println(msg); } catch (IOException ignored) {} } }
-    private static void saveInitialLogsToPath() { try (FileWriter fw = new FileWriter(logPath, false); PrintWriter pw = new PrintWriter(fw)) { pw.println("==============================================================="); pw.println("[START] " + REPO_NAME + " API 추출 및 Whatap 통합 시작 (v13.13)"); pw.println("==============================================================="); synchronized (RUNTIME_LOGS) { for (String l : RUNTIME_LOGS) pw.println(l); } } catch (IOException ignored) {} }
+    private static void saveInitialLogsToPath() { try (FileWriter fw = new FileWriter(logPath, false); PrintWriter pw = new PrintWriter(fw)) { pw.println("==============================================================="); pw.println("[START] " + REPO_NAME + " API 추출 및 Whatap 통합 시작 (v13.14)"); pw.println("==============================================================="); synchronized (RUNTIME_LOGS) { for (String l : RUNTIME_LOGS) pw.println(l); } } catch (IOException ignored) {} }
     private static void addExceptionLog(String title, Exception e) { StringWriter sw = new StringWriter(); e.printStackTrace(new PrintWriter(sw)); addLog("\n[ERROR] " + title + "\n" + sw.toString()); }
 
     private static List<String[]> getRecentGitHistories(String rel, String root, int c) {
