@@ -23,13 +23,13 @@ import java.util.stream.Collectors;
 
 /**
  * 프로젝트명: ApiExcelExporter (Bitbucket 관리형)
- * Version: 13.16 (Regex 엔진 클래스 레벨 상수 치환 버그 수정)
+ * Version: 13.17 (@Operation 어노테이션 통합 지원)
  * 반영사항:
- * 1. [버그 수정] Text Block(""") 등으로 인해 Regex 엔진 폴백 시, 컨트롤러 클래스 상단 @RequestMapping의 상수가 치환되지 않아 경로가 누락되는 현상 수정 [cite: 2026-03-20]
- * 2. [기능 유지] 13.15 버전의 엑셀 하이퍼링크 검증 오류 해결 및 클릭 이동 방지 처리 유지 [cite: 2026-03-20]
- * 3. [로깅 보완] JavaParser 및 Regex 분석 시 모든 메소드 진입 및 스킵 사유 상세 추적 로깅 유지 [cite: 2026-03-20]
+ * 1. [기능 고도화] Swagger 3.x 규격인 @Operation(summary="...") 추출 로직 추가 [cite: 2026-03-20]
+ * 2. [우선순위 적용] @ApiOperation(value)를 최우선으로 찾고, 없을 경우 @Operation(summary)를 찾아 ApiOperation 컬럼에 매핑 [cite: 2026-03-20]
+ * 3. [기능 유지] Text Block(""") Regex 폴백 시 컨트롤러/메소드 상수 치환 로직 완벽 보존 [cite: 2026-03-20]
  * 4. [기능 유지] PATH_CONSTANTS 상수 치환, API_PATH_PREFIX 일괄 추가 로직 완벽 보존 [cite: 2026-03-12]
- * 5. [성능/유지] i9-13900 병렬 분석, 기존 상세 주석 전수 보존 [cite: 2026-02-05, 2026-02-23]
+ * 5. [성능/유지] i9-13900 병렬 분석, 상세 추적 로깅([Analyze], [Skip]), 엑셀 레이아웃 및 상세 주석 전수 보존 [cite: 2026-02-05, 2026-02-23]
  */
 public class ApiExcelExporter {
 
@@ -102,7 +102,7 @@ public class ApiExcelExporter {
         String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd'_추출'"));
 
         System.out.println("===============================================================");
-        System.out.println("[START] " + REPO_NAME + " API 추출 및 Whatap 통합 시작 (v13.16)");
+        System.out.println("[START] " + REPO_NAME + " API 추출 및 Whatap 통합 시작 (v13.17)");
         System.out.println("[INFO] 관리 정보: 팀[" + TEAM_NAME + "] / 담당자[" + MANAGER_NAME + "]");
         System.out.println("===============================================================");
 
@@ -405,7 +405,13 @@ public class ApiExcelExporter {
                             info.descriptionTag = dM.find() ? dM.group(2).trim() : "-";
                         } else { info.fullComment = "-"; info.descriptionTag = "-"; }
                         info.requestPropertyValue = extractRequestPropertyFromNode(method);
+
+                        // [v13.17] @ApiOperation(value) 우선, 없으면 @Operation(summary) 파싱 [cite: 2026-03-20]
                         info.apiOperationValue = extractAnnotationValue(method, "ApiOperation", "value");
+                        if ("-".equals(info.apiOperationValue)) {
+                            info.apiOperationValue = extractAnnotationValue(method, "Operation", "summary");
+                        }
+
                         apis.add(info);
                         log.append("\n      └ [Found] ").append(info.apiPath);
                     }
@@ -481,7 +487,6 @@ public class ApiExcelExporter {
             Matcher cM_Main = Pattern.compile("/\\*\\*(.*?)\\*/", Pattern.DOTALL).matcher(raw);
             String controllerComment = cM_Main.find() ? cM_Main.group(1).replaceAll("\\r|\\n|\\*", " ").trim() : "-";
 
-            // [v13.16 BUG FIX] Regex 엔진에서도 컨트롤러 레벨 상수 치환 지원 (헤더 영역 한정 검색) [cite: 2026-03-20]
             String classPath = "";
             String classHeadChunk = clean.substring(0, Math.min(clean.length(), 3000));
             Matcher cm = Pattern.compile("@RequestMapping\\s*\\((.*?)\\)", Pattern.DOTALL).matcher(classHeadChunk);
@@ -527,6 +532,16 @@ public class ApiExcelExporter {
                                 Matcher dM = Pattern.compile("@?(description|deprecation)[\\s:]*([^@\\n\\r*]+)", Pattern.CASE_INSENSITIVE).matcher(cM.group(1));
                                 info.descriptionTag = dM.find() ? dM.group(2).trim() : "-";
                             } else { info.fullComment = "-"; info.descriptionTag = "-"; }
+
+                            // [v13.17 Regex] @ApiOperation(value) 우선, 없으면 @Operation(summary) 파싱 [cite: 2026-03-20]
+                            Matcher aM = Pattern.compile("@ApiOperation\\s*\\(.*?value\\s*=\\s*\"([^\"]+)\".*?\\)", Pattern.DOTALL).matcher(headArea);
+                            if (aM.find()) {
+                                info.apiOperationValue = aM.group(1);
+                            } else {
+                                Matcher opM = Pattern.compile("@Operation\\s*\\(.*?summary\\s*=\\s*\"([^\"]+)\".*?\\)", Pattern.DOTALL).matcher(headArea);
+                                info.apiOperationValue = opM.find() ? opM.group(1) : "-";
+                            }
+
                             apis.add(info);
                             log.append("\n      └ [Found-Regex] ").append(info.apiPath);
                         } else {
@@ -545,7 +560,7 @@ public class ApiExcelExporter {
     }
 
     private static void addLog(String msg) { System.out.println(msg); if (logPath != null && !logPath.isEmpty()) { try (FileWriter fw = new FileWriter(logPath, true); PrintWriter pw = new PrintWriter(fw)) { pw.println(msg); } catch (IOException ignored) {} } }
-    private static void saveInitialLogsToPath() { try (FileWriter fw = new FileWriter(logPath, false); PrintWriter pw = new PrintWriter(fw)) { pw.println("==============================================================="); pw.println("[START] " + REPO_NAME + " API 추출 및 Whatap 통합 시작 (v13.16)"); pw.println("==============================================================="); synchronized (RUNTIME_LOGS) { for (String l : RUNTIME_LOGS) pw.println(l); } } catch (IOException ignored) {} }
+    private static void saveInitialLogsToPath() { try (FileWriter fw = new FileWriter(logPath, false); PrintWriter pw = new PrintWriter(fw)) { pw.println("==============================================================="); pw.println("[START] " + REPO_NAME + " API 추출 및 Whatap 통합 시작 (v13.17)"); pw.println("==============================================================="); synchronized (RUNTIME_LOGS) { for (String l : RUNTIME_LOGS) pw.println(l); } } catch (IOException ignored) {} }
     private static void addExceptionLog(String title, Exception e) { StringWriter sw = new StringWriter(); e.printStackTrace(new PrintWriter(sw)); addLog("\n[ERROR] " + title + "\n" + sw.toString()); }
 
     private static List<String[]> getRecentGitHistories(String rel, String root, int c) {
