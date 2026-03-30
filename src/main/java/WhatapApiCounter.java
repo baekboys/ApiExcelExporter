@@ -16,7 +16,7 @@ import java.util.stream.Collectors;
 
 /**
  * 프로젝트명: WhatapApiCounter (연간 통계 전수 추출 도구)
- * Version: 5.6 (파일명 간소화 및 날짜 형식 변경)
+ * Version: 5.7 (파일명 간소화 및 날짜 형식 변경)
  * [수정 사항]
  * 1. [파라미터화] pcode 값을 config.properties에서 로드할 수 있도록 수정 (기본값: 8)
  * 2. [보안 강화] WHATAP_URL, OUTPUT_DIR 기본값을 빈 값("")으로 수정하여 정보 노출 방지
