@@ -224,7 +224,7 @@ public class WhatapApiCounter {
             FetchSegment seg = new FetchSegment();
             seg.label = actualS.format(DateTimeFormatter.ofPattern("yyyy-MM-dd")) + "~" + actualE.getDayOfMonth();
             seg.stime = actualS.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli();
-            seg.etime = actualE.plusDays(1).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli();
+            seg.etime = actualE.plusDays(1).atStartOfDay(ZoneId.systemDefault()).minusNanos(1).toInstant().toEpochMilli();
             seg.monthKey = monthKey;
             SEGMENTS.add(seg);
         }
